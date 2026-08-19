@@ -96,7 +96,7 @@ function broadcastRoomState(room) {
   const baseState = {
     type: 'game_state',
     roomId: room.roomId,
-    calledNumbers: room.calledNumbers,
+    calledNumbers: [...room.calledNumbers],
     lastCalledNumber: room.lastCalledNumber,
     currentTurn: room.currentTurn,
     gameStatus: room.gameStatus,

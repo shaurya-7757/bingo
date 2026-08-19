@@ -388,9 +388,11 @@ function App() {
       }
       if (data.playerNum) setOnlinePlayerNum(data.playerNum);
       const card = data.ownCard || data.myCard;
-      if (card && card.length === 25) setMyOnlineCard(card);
+      if (card && card.length === 25) setMyOnlineCard([...card]);
 
-      setCalledNumbers(data.calledNumbers || []);
+      if (Array.isArray(data.calledNumbers)) {
+        setCalledNumbers([...data.calledNumbers]);
+      }
       setLastCalledNumber(data.lastCalledNumber != null ? data.lastCalledNumber : null);
       setCurrentPlayer(data.currentTurn || 1);
       setGameOver(!!data.gameOver);
@@ -410,7 +412,7 @@ function App() {
           if (typeof oppLines === "number") setOpponentOnlineLines(oppLines);
         }
         const oppCard = data.opponentCard || (myNum === 1 ? data.player2Card : data.player1Card);
-        if (oppCard) setOpponentOnlineCard(oppCard);
+        if (oppCard) setOpponentOnlineCard([...oppCard]);
       } else {
         setOpponentOnlineCard(null);
       }
@@ -960,16 +962,25 @@ function App() {
             <span className="status-value">{getGameStatusText()}</span>
           </div>
         </div>
-        {calledNumbers.length > 0 && (
-          <div className="called-history">
-            <span className="status-label">Called Numbers:</span>
-            <div className="called-history-list">
-              {calledNumbers.map((n, i) => (
-                <span key={i} className="called-history-chip">{n}</span>
-              ))}
-            </div>
+        <div className="called-history">
+          <div className="called-history-header">
+            <span className="status-label">CALLED NUMBERS ({calledNumbers.length}/25):</span>
           </div>
-        )}
+          <div className="called-history-list">
+            {calledNumbers.length === 0 ? (
+              <span className="called-history-empty">No numbers called yet. Start by picking a number on your turn!</span>
+            ) : (
+              calledNumbers.map((n, i) => (
+                <span
+                  key={i}
+                  className={`called-history-chip ${n === lastCalledNumber ? "latest-chip" : ""}`}
+                >
+                  {n}
+                </span>
+              ))
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="cards-container">

@@ -424,13 +424,19 @@ export class MultiplayerClient {
     const state = this.hostState;
     if (!state) return;
 
+    const clonedCalled = [...state.calledNumbers];
+    const clonedP1Card = [...state.player1Card];
+    const clonedP2Card = [...state.player2Card];
+
     // Host View
     this.onMessage({
       type: "game_state",
       roomId: state.roomId,
       playerNum: 1,
-      ownCard: state.player1Card,
-      calledNumbers: state.calledNumbers,
+      playerId: "player1",
+      ownCard: clonedP1Card,
+      myCard: clonedP1Card,
+      calledNumbers: clonedCalled,
       lastCalledNumber: state.lastCalledNumber,
       currentTurn: state.currentTurn,
       gameOver: state.gameOver,
@@ -438,7 +444,7 @@ export class MultiplayerClient {
       myLines: state.player1Lines,
       player1Lines: state.player1Lines,
       player2Lines: state.player2Lines,
-      opponentCard: state.gameOver ? state.player2Card : null,
+      opponentCard: state.gameOver ? clonedP2Card : null,
       opponentConnected: true,
       gameStatus: state.gameOver ? "game_over" : "in_progress",
     });
@@ -449,8 +455,10 @@ export class MultiplayerClient {
         type: "game_state",
         roomId: state.roomId,
         playerNum: 2,
-        ownCard: state.player2Card,
-        calledNumbers: state.calledNumbers,
+        playerId: "player2",
+        ownCard: clonedP2Card,
+        myCard: clonedP2Card,
+        calledNumbers: clonedCalled,
         lastCalledNumber: state.lastCalledNumber,
         currentTurn: state.currentTurn,
         gameOver: state.gameOver,
@@ -458,7 +466,7 @@ export class MultiplayerClient {
         myLines: state.player2Lines,
         player1Lines: state.player1Lines,
         player2Lines: state.player2Lines,
-        opponentCard: state.gameOver ? state.player1Card : null,
+        opponentCard: state.gameOver ? clonedP1Card : null,
         opponentConnected: true,
         gameStatus: state.gameOver ? "game_over" : "in_progress",
       });
