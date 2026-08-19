@@ -183,7 +183,7 @@ function chooseAIMove(difficulty, availableNumbers, aiCard, player1Card, calledS
   return chooseHardMove(availableNumbers, aiCard, player1Card, calledSet);
 }
 
-function BingoCard({ card, calledSet, completedCellSet, playerNum, isActive, lines, cardStatus, onNumberClick, gameMode }) {
+function BingoCard({ card, calledSet, completedCellSet, playerNum, isActive, lines, cardStatus, onNumberClick, gameMode, lastCalledNumber }) {
   const isPlayer1 = playerNum === 1;
   const isAiMode = gameMode === "ai";
   const label = isPlayer1 ? (isAiMode ? "YOUR CARD" : "PLAYER 1 CARD") : (isAiMode ? "AI CARD" : "PLAYER 2 CARD");
@@ -200,14 +200,17 @@ function BingoCard({ card, calledSet, completedCellSet, playerNum, isActive, lin
         {card.map((number, index) => {
           const isCalled = calledSet.has(number);
           const isLineCell = completedCellSet.has(index);
+          const isLastCalled = lastCalledNumber === number;
           const clickable = isActive && !isCalled;
           return (
             <div
               key={index}
-              className={`bingo-cell ${variant}-cell ${isCalled ? "called" : ""} ${isLineCell ? "line-cell" : ""} ${clickable ? "clickable" : ""}`}
+              className={`bingo-cell ${variant}-cell ${isCalled ? "called" : ""} ${isLineCell ? "line-cell" : ""} ${isLastCalled ? "last-called" : ""} ${clickable ? "clickable" : ""}`}
               onClick={() => clickable && onNumberClick(number)}
             >
-              {number}
+              <span className="cell-num">{number}</span>
+              {isCalled && <span className="cell-check">✓</span>}
+              {isLastCalled && <span className="cell-last-badge">LAST</span>}
             </div>
           );
         })}
@@ -513,6 +516,10 @@ function App() {
       if (gameOver) return;
       if (currentPlayer !== onlinePlayerNum) return;
       if (calledSet.has(number)) return;
+
+      // Optimistic UI update for instant feedback
+      setCalledNumbers((prev) => (prev.includes(number) ? prev : [...prev, number]));
+      setLastCalledNumber(number);
 
       getClient().selectNumber(number);
       return;
@@ -968,7 +975,7 @@ function App() {
       <div className="cards-container">
         {gameMode === "online" ? (
           <>
-            <div className="card-section p1-section active-card">
+            <div className={`card-section ${onlinePlayerNum === 1 ? "p1-section" : "p2-section"} active-card`}>
               <h3 className="card-label">YOUR CARD (PLAYER {onlinePlayerNum})</h3>
               <div className="card-meta">
                 <span className="card-lines">YOUR LINES: {effectiveMyLines}/5</span>
@@ -976,18 +983,21 @@ function App() {
                   {winner === `player${onlinePlayerNum}` ? "WINS!" : winner === "draw" ? "Draw" : winner !== null ? "Lost" : currentPlayer === onlinePlayerNum && !gameOver ? "Your Turn" : "Waiting"}
                 </span>
               </div>
-              <div className="bingo-grid p1-grid">
+              <div className={`bingo-grid ${onlinePlayerNum === 1 ? "p1-grid" : "p2-grid"}`}>
                 {myOnlineCard.map((number, index) => {
                   const isCalled = calledSet.has(number);
                   const isLineCell = myOnlineCompletedCells.has(index);
+                  const isLastCalled = lastCalledNumber === number;
                   const clickable = !gameOver && currentPlayer === onlinePlayerNum && !isCalled && opponentConnected && wsStatus === "connected";
                   return (
                     <div
                       key={index}
-                      className={`bingo-cell p1-cell ${isCalled ? "called" : ""} ${isLineCell ? "line-cell" : ""} ${clickable ? "clickable" : ""}`}
+                      className={`bingo-cell ${onlinePlayerNum === 1 ? "p1-cell" : "p2-cell"} ${isCalled ? "called" : ""} ${isLineCell ? "line-cell" : ""} ${isLastCalled ? "last-called" : ""} ${clickable ? "clickable" : ""}`}
                       onClick={() => clickable && handleNumberClick(onlinePlayerNum, number)}
                     >
-                      {number}
+                      <span className="cell-num">{number}</span>
+                      {isCalled && <span className="cell-check">✓</span>}
+                      {isLastCalled && <span className="cell-last-badge">LAST</span>}
                     </div>
                   );
                 })}
@@ -995,7 +1005,7 @@ function App() {
             </div>
 
             {gameOver && opponentOnlineCard ? (
-              <div className="card-section p2-section active-card reveal-opponent-card">
+              <div className={`card-section ${onlinePlayerNum === 1 ? "p2-section" : "p1-section"} active-card reveal-opponent-card`}>
                 <h3 className="card-label">OPPONENT FINAL CARD (PLAYER {onlinePlayerNum === 1 ? 2 : 1})</h3>
                 <div className="card-meta">
                   <span className="card-lines">OPPONENT LINES: {effectiveOppLines}/5</span>
@@ -1003,13 +1013,15 @@ function App() {
                     {winner === `player${onlinePlayerNum === 1 ? 2 : 1}` ? "WINS!" : winner === "draw" ? "Draw" : "Lost"}
                   </span>
                 </div>
-                <div className="bingo-grid p2-grid">
+                <div className={`bingo-grid ${onlinePlayerNum === 1 ? "p2-grid" : "p1-grid"}`}>
                   {opponentOnlineCard.map((number, index) => {
                     const isCalled = calledSet.has(number);
                     const isLineCell = opponentOnlineCompletedCells.has(index);
+                    const isLastCalled = lastCalledNumber === number;
                     return (
-                      <div key={index} className={`bingo-cell p2-cell ${isCalled ? "called" : ""} ${isLineCell ? "line-cell" : ""}`}>
-                        {number}
+                      <div key={index} className={`bingo-cell ${onlinePlayerNum === 1 ? "p2-cell" : "p1-cell"} ${isCalled ? "called" : ""} ${isLineCell ? "line-cell" : ""} ${isLastCalled ? "last-called" : ""}`}>
+                        <span className="cell-num">{number}</span>
+                        {isCalled && <span className="cell-check">✓</span>}
                       </div>
                     );
                   })}
@@ -1031,6 +1043,7 @@ function App() {
               cardStatus={getCardStatus(1)}
               onNumberClick={(num) => handleNumberClick(1, num)}
               gameMode={gameMode}
+              lastCalledNumber={lastCalledNumber}
             />
             <BingoCard
               card={player2Card}
@@ -1042,6 +1055,7 @@ function App() {
               cardStatus={getCardStatus(2)}
               onNumberClick={(num) => handleNumberClick(2, num)}
               gameMode={gameMode}
+              lastCalledNumber={lastCalledNumber}
             />
           </>
         )}
