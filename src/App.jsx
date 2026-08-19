@@ -267,10 +267,9 @@ function getStoredPlayerId() {
  */
 function getResolvedWsUrl() {
   const envUrl = (import.meta.env.VITE_WS_URL || "").trim();
-  if (envUrl) return envUrl;
 
   if (typeof window !== "undefined") {
-    const host = window.location.hostname || "localhost";
+    const host = window.location.hostname || "";
     const isLocalhost =
       host === "localhost" ||
       host === "127.0.0.1" ||
@@ -278,12 +277,16 @@ function getResolvedWsUrl() {
       host.startsWith("172.") ||
       host.endsWith(".local");
 
-    if (isLocalhost) {
-      return "ws://" + host + ":8080";
+    // If on a public deployed website and envUrl points to localhost, ignore it to use free P2P
+    if (!isLocalhost && envUrl && (envUrl.includes("localhost") || envUrl.includes("127.0.0.1"))) {
+      return null;
     }
+
+    if (envUrl && !envUrl.includes("localhost")) return envUrl;
+    if (isLocalhost) return "ws://" + host + ":8080";
   }
 
-  return null;
+  return envUrl || null;
 }
 
 function App() {

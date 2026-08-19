@@ -27,8 +27,8 @@ const PEER_PREFIX = "bingo-multiplayer-shaurya-";
 
 /**
  * Universal Multiplayer Client
- * Supports both WebRTC Peer-to-Peer (100% Free, No Server Needed)
- * and standard WebSocket servers (e.g. Render / local ws).
+ * Supports both WebRTC Peer-to-Peer (100% Free, Zero Server Setup)
+ * and optional custom WebSocket servers with automatic fallback.
  */
 export class MultiplayerClient {
   constructor({ wsUrl, onMessage, onError, onStatusChange }) {
@@ -64,6 +64,7 @@ export class MultiplayerClient {
   }
 
   connectPeer(onReady) {
+    this.mode = "p2p";
     this.onStatusChange("connected");
     if (onReady) onReady();
   }
@@ -79,12 +80,21 @@ export class MultiplayerClient {
     try {
       this.ws = new WebSocket(this.wsUrl);
     } catch (err) {
-      this.onError("Failed to connect to WebSocket: " + err.message);
-      this.onStatusChange("disconnected");
+      console.warn("Failed to construct WebSocket, falling back to P2P:", err);
+      this.fallbackToP2P(onReady);
       return;
     }
 
+    const connectionTimer = setTimeout(() => {
+      if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+        console.warn("WebSocket connection timed out. Falling back to P2P.");
+        try { this.ws.close(); } catch {}
+        this.fallbackToP2P(onReady);
+      }
+    }, 4000);
+
     this.ws.onopen = () => {
+      clearTimeout(connectionTimer);
       this.onStatusChange("connected");
       if (onReady) onReady();
     };
@@ -98,15 +108,27 @@ export class MultiplayerClient {
       }
     };
 
-    this.ws.onerror = (err) => {
-      console.error("WebSocket error:", err);
-      this.onError("WebSocket connection error. Make sure your server is running.");
-      this.onStatusChange("disconnected");
+    this.ws.onerror = () => {
+      clearTimeout(connectionTimer);
+      console.warn("WebSocket unavailable. Switching to serverless P2P multiplayer.");
+      this.fallbackToP2P(onReady);
     };
 
     this.ws.onclose = () => {
-      this.onStatusChange("disconnected");
+      clearTimeout(connectionTimer);
+      if (this.mode === "ws") {
+        this.onStatusChange("disconnected");
+      }
     };
+  }
+
+  fallbackToP2P(onReady) {
+    this.mode = "p2p";
+    if (this.ws) {
+      try { this.ws.close(); } catch {}
+      this.ws = null;
+    }
+    this.connectPeer(onReady);
   }
 
   createRoom(playerId) {
@@ -118,6 +140,7 @@ export class MultiplayerClient {
     }
 
     // WebRTC P2P Mode
+    this.mode = "p2p";
     this.isHost = true;
     this.playerNum = 1;
     const roomCode = generateRoomCode();
@@ -128,9 +151,14 @@ export class MultiplayerClient {
       try { this.peer.destroy(); } catch {}
     }
 
-    this.peer = new Peer(peerId, {
-      debug: 1,
-    });
+    try {
+      this.peer = new Peer(peerId, {
+        debug: 1,
+      });
+    } catch (err) {
+      this.onError("Could not initialize multiplayer: " + err.message);
+      return;
+    }
 
     const hostCard = createShuffledCard();
     const guestCard = createShuffledCard();
@@ -151,6 +179,7 @@ export class MultiplayerClient {
     };
 
     this.peer.on("open", () => {
+      this.onStatusChange("connected");
       this.onMessage({
         type: "room_created",
         roomId: roomCode,
@@ -196,10 +225,9 @@ export class MultiplayerClient {
     this.peer.on("error", (err) => {
       console.error("PeerJS error:", err);
       if (err.type === "unavailable-id") {
-        // Retry with a new code
         this.createRoom(playerId);
       } else {
-        this.onError("Connection error: " + (err.message || "Failed to create room."));
+        this.onError("Multiplayer connection error: " + (err.message || "Failed to create room."));
       }
     });
   }
@@ -215,6 +243,7 @@ export class MultiplayerClient {
     }
 
     // WebRTC P2P Mode
+    this.mode = "p2p";
     this.isHost = false;
     this.playerNum = 2;
 
@@ -222,11 +251,17 @@ export class MultiplayerClient {
       try { this.peer.destroy(); } catch {}
     }
 
-    this.peer = new Peer({
-      debug: 1,
-    });
+    try {
+      this.peer = new Peer({
+        debug: 1,
+      });
+    } catch (err) {
+      this.onError("Could not initialize connection: " + err.message);
+      return;
+    }
 
     this.peer.on("open", () => {
+      this.onStatusChange("connected");
       const targetPeerId = PEER_PREFIX + cleanCode.toLowerCase();
       this.conn = this.peer.connect(targetPeerId, { reliable: true });
 
@@ -253,7 +288,7 @@ export class MultiplayerClient {
 
     this.peer.on("error", (err) => {
       console.error("Peer error:", err);
-      this.onError("Could not find room " + cleanCode + ". Make sure the code is correct.");
+      this.onError("Could not find room " + cleanCode + ". Make sure the room code is correct.");
     });
   }
 
