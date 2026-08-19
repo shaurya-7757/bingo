@@ -192,6 +192,36 @@ function getResolvedWsUrl() {
   return null;
 }
 
+function ThemeToggle({ theme, setTheme }) {
+  const toggleTheme = (newTheme) => {
+    setTheme(newTheme);
+    document.documentElement.setAttribute("data-theme", newTheme);
+    localStorage.setItem("bingo_theme", newTheme);
+  };
+
+  return (
+    <div className="theme-toggle-bar">
+      <span className="theme-toggle-label">THEME</span>
+      <div className="theme-toggle-group">
+        <button
+          type="button"
+          className={`theme-btn ${theme === "light" ? "active" : ""}`}
+          onClick={() => toggleTheme("light")}
+        >
+          LIGHT
+        </button>
+        <button
+          type="button"
+          className={`theme-btn ${theme === "dark" ? "active" : ""}`}
+          onClick={() => toggleTheme("dark")}
+        >
+          DARK
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BingoCard({
   card,
   calledSet,
@@ -261,10 +291,21 @@ function HiddenOpponentCard({ opponentConnected, opponentLabel }) {
 }
 
 export function App() {
+  // Theme State ("light" | "dark") - Default to Light Mode
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem("bingo_theme") || "light";
+  });
+
+  // Keep theme attribute in sync
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("bingo_theme", theme);
+  }, [theme]);
+
   // Authentication & User State
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
-  const [authMode, setAuthMode] = useState("signin"); // "signin", "signup", "forgot"
+  const [authMode, setAuthMode] = useState("signin"); // "signin", "signup"
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authConfirmPassword, setAuthConfirmPassword] = useState("");
@@ -318,7 +359,7 @@ export function App() {
   const [loadingFriends, setLoadingFriends] = useState(false);
 
   // Incoming Real-time Game Invite Modal
-  const [incomingInvite, setIncomingInvite] = useState(null); // { inviterId, inviterUsername, roomId }
+  const [incomingInvite, setIncomingInvite] = useState(null);
 
   // Match History & Profile State
   const [matchHistory, setMatchHistory] = useState([]);
@@ -339,25 +380,49 @@ export function App() {
   const clientRef = useRef(null);
   const currentRoomIdRef = useRef("");
 
-  // Initialize Authentication
+  // Initialize Persistent Authentication on startup
   useEffect(() => {
+    let isMounted = true;
     async function initAuth() {
       try {
         const user = await authService.getCurrentUser();
-        if (user) {
-          setCurrentUser(user);
-          setScreen("main_menu");
-        } else {
-          setScreen("auth");
+        if (isMounted) {
+          if (user) {
+            setCurrentUser(user);
+            setScreen("main_menu");
+          } else {
+            setCurrentUser(null);
+            setScreen("auth");
+          }
         }
       } catch (err) {
         console.warn("Auth initialization note:", err.message);
-        setScreen("auth");
+        if (isMounted) {
+          setCurrentUser(null);
+          setScreen("auth");
+        }
       } finally {
-        setAuthChecking(false);
+        if (isMounted) setAuthChecking(false);
       }
     }
+
     initAuth();
+
+    const unsubscribe = authService.subscribeToAuthChanges((user) => {
+      if (isMounted) {
+        if (user) {
+          setCurrentUser(user);
+        } else {
+          setCurrentUser(null);
+          setScreen("auth");
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   // Sync Stats on user or screen change
@@ -567,7 +632,7 @@ export function App() {
       setCurrentUser(user);
       setScreen("main_menu");
     } catch (err) {
-      setAuthError(err.message || "Failed to create account.");
+      setAuthError(authService.formatAuthError(err));
     } finally {
       setAuthLoading(false);
     }
@@ -596,7 +661,7 @@ export function App() {
       setCurrentUser(user);
       setScreen("main_menu");
     } catch (err) {
-      setAuthError(err.message || "Invalid email or password.");
+      setAuthError(authService.formatAuthError(err));
     } finally {
       setAuthLoading(false);
     }
@@ -604,16 +669,16 @@ export function App() {
 
   const handleForgotPassword = async () => {
     if (!authEmail.trim()) {
-      setAuthError("Please enter your email to reset your password.");
+      setAuthError("Please enter your email address to receive reset instructions.");
       return;
     }
     setAuthLoading(true);
     try {
       await authService.resetPassword(authEmail);
-      setAuthSuccess("Password reset instructions sent to your email.");
+      setAuthSuccess("Password reset email sent. Please check your inbox.");
       setAuthError("");
     } catch (err) {
-      setAuthError(err.message || "Failed to send reset email.");
+      setAuthError(authService.formatAuthError(err));
     } finally {
       setAuthLoading(false);
     }
@@ -865,16 +930,17 @@ export function App() {
     setGameMode("online");
     const client = getClient();
     client.createRoom(currentUser);
-    // After creating room, send invitation
     setTimeout(() => {
       if (client.roomId && client.ws && client.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(JSON.stringify({
-          type: "friend_invite",
-          targetUserId: friend.id,
-          inviterId: currentUser.id,
-          inviterUsername: currentUser.username,
-          roomId: client.roomId,
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: "friend_invite",
+            targetUserId: friend.id,
+            inviterId: currentUser.id,
+            inviterUsername: currentUser.username,
+            roomId: client.roomId,
+          })
+        );
       }
     }, 400);
     setScreen("online_lobby");
@@ -958,10 +1024,27 @@ export function App() {
   const wsStatusLabel = wsStatus === "connecting" ? "CONNECTING" : wsStatus === "connected" ? "CONNECTED" : "DISCONNECTED";
   const wsStatusClass = wsStatus === "connecting" ? "conn-connecting" : wsStatus === "connected" ? "conn-online" : "conn-offline";
 
+  // --- SCREEN 0: LOADING ACCOUNT STATE (Prevents flash of login screen) ---
+  if (authChecking) {
+    return (
+      <div className="bingo-app loading-screen">
+        <h1 className="title">BINGO</h1>
+        <div className="loading-card">
+          <div className="spinner-large"></div>
+          <div className="loading-text">LOADING ACCOUNT...</div>
+        </div>
+      </div>
+    );
+  }
+
   // --- SCREEN 1: AUTHENTICATION ---
-  if (screen === "auth" && !authChecking) {
+  if (screen === "auth") {
     return (
       <div className="bingo-app auth-page">
+        <div className="top-header-bar">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+        </div>
+
         <h1 className="title">BINGO</h1>
         <p className="subtitle">Real-time Multiplayer & Match Tracking</p>
 
@@ -1011,7 +1094,7 @@ export function App() {
               <button type="submit" className="btn btn-auth-primary" disabled={authLoading}>
                 {authLoading ? "SIGNING IN..." : "SIGN IN"}
               </button>
-              <button type="button" className="btn-link" onClick={handleForgotPassword}>
+              <button type="button" className="btn-link" onClick={handleForgotPassword} disabled={authLoading}>
                 FORGOT PASSWORD
               </button>
             </form>
@@ -1073,11 +1156,11 @@ export function App() {
             <span>OR</span>
           </div>
 
-          <button className="btn btn-guest" onClick={handlePlayAsGuest}>
+          <button className="btn btn-guest" onClick={handlePlayAsGuest} disabled={authLoading}>
             PLAY AS GUEST
           </button>
           <div className="guest-note">
-            Guest mode lets you play immediately. Online stats and friendships are preserved only for registered accounts.
+            Guest mode lets you play immediately. Online stats and friendships are preserved permanently for registered accounts.
           </div>
         </div>
       </div>
@@ -1088,6 +1171,10 @@ export function App() {
   if (screen === "main_menu") {
     return (
       <div className="bingo-app main-menu-page">
+        <div className="top-header-bar">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+        </div>
+
         <h1 className="title">BINGO</h1>
         <p className="welcome-tag">
           Welcome, <strong>{currentUser?.username || "Player"}</strong>
@@ -1097,12 +1184,12 @@ export function App() {
         <div className="main-menu-grid">
           <button className="menu-btn primary-menu-btn" onClick={() => setScreen("diff_select")}>
             <div className="menu-btn-title">PLAY AGAINST AI</div>
-            <div className="menu-btn-desc">Challenge the computer in Single Player mode</div>
+            <div className="menu-btn-desc">Challenge the computer across 3 difficulty levels</div>
           </button>
 
           <button className="menu-btn primary-menu-btn" onClick={() => startNewLocalGame("two_player")}>
             <div className="menu-btn-title">TWO PLAYER</div>
-            <div className="menu-btn-desc">Play locally with a friend on the same screen</div>
+            <div className="menu-btn-desc">Play locally with a friend on the same device</div>
           </button>
 
           <button className="menu-btn primary-menu-btn" onClick={() => { setGameMode("online"); connectMultiplayer(); setScreen("online_lobby"); }}>
@@ -1112,17 +1199,17 @@ export function App() {
 
           <button className="menu-btn secondary-menu-btn" onClick={() => { setScreen("friends"); loadFriendsData(); }}>
             <div className="menu-btn-title">FRIENDS</div>
-            <div className="menu-btn-desc">View friends, presence, and send game invites</div>
+            <div className="menu-btn-desc">Manage friends, presence, and send game invites</div>
           </button>
 
           <button className="menu-btn secondary-menu-btn" onClick={() => { setScreen("history"); loadMatchHistoryData(); }}>
             <div className="menu-btn-title">ONLINE HISTORY</div>
-            <div className="menu-btn-desc">View past completed multiplayer matches</div>
+            <div className="menu-btn-desc">View completed multiplayer matches and game breakdown</div>
           </button>
 
           <button className="menu-btn secondary-menu-btn" onClick={() => { setScreen("profile"); refreshStats(); }}>
             <div className="menu-btn-title">PROFILE</div>
-            <div className="menu-btn-desc">Check your win rate and gameplay stats</div>
+            <div className="menu-btn-desc">Check your win rate and online gameplay statistics</div>
           </button>
         </div>
 
@@ -1137,6 +1224,10 @@ export function App() {
   if (screen === "profile") {
     return (
       <div className="bingo-app profile-page">
+        <div className="top-header-bar">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+        </div>
+
         <h1 className="title">BINGO</h1>
         <p className="subtitle">USER PROFILE & STATISTICS</p>
 
@@ -1210,6 +1301,10 @@ export function App() {
   if (screen === "friends") {
     return (
       <div className="bingo-app friends-page">
+        <div className="top-header-bar">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+        </div>
+
         <h1 className="title">BINGO</h1>
         <p className="subtitle">FRIEND SYSTEM</p>
 
@@ -1367,6 +1462,10 @@ export function App() {
   if (screen === "history") {
     return (
       <div className="bingo-app history-page">
+        <div className="top-header-bar">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+        </div>
+
         <h1 className="title">BINGO</h1>
         <p className="subtitle">ONLINE MATCH HISTORY</p>
 
@@ -1460,6 +1559,10 @@ export function App() {
   if (screen === "diff_select") {
     return (
       <div className="bingo-app mode-selection-page">
+        <div className="top-header-bar">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+        </div>
+
         <h1 className="title">BINGO</h1>
         <p className="subtitle">CHOOSE DIFFICULTY</p>
         <div className="diff-selection-container">
@@ -1487,6 +1590,10 @@ export function App() {
   if (screen === "online_lobby") {
     return (
       <div className="bingo-app mode-selection-page">
+        <div className="top-header-bar">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+        </div>
+
         <h1 className="title">BINGO</h1>
         <p className="subtitle">ONLINE BINGO</p>
 
@@ -1582,6 +1689,10 @@ export function App() {
 
   return (
     <div className="bingo-app">
+      <div className="top-header-bar">
+        <ThemeToggle theme={theme} setTheme={setTheme} />
+      </div>
+
       <h1 className="title">BINGO</h1>
 
       {gameMode === "ai" && (
