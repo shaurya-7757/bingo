@@ -209,7 +209,6 @@ function BingoCard({ card, calledSet, completedCellSet, playerNum, isActive, lin
               onClick={() => clickable && onNumberClick(number)}
             >
               <span className="cell-num">{number}</span>
-              {isCalled && <span className="cell-check">✓</span>}
               {isLastCalled && <span className="cell-last-badge">LAST</span>}
             </div>
           );
@@ -225,14 +224,13 @@ function HiddenOpponentCard({ opponentConnected }) {
     <div className="card-section p2-section inactive-card online-hidden-opponent">
       <h3 className="card-label">OPPONENT CARD</h3>
       <div className="card-meta">
-        <span className="card-lines">OPPONENT: 🔒 HIDDEN</span>
+        <span className="card-lines">OPPONENT: HIDDEN</span>
         <span className={`card-status ${opponentConnected ? "card-status-wait" : "card-status-lose"}`}>
           {opponentConnected ? "Connected" : "Disconnected"}
         </span>
       </div>
       <div className="bingo-grid p2-grid hidden-card-grid">
         <div className="hidden-card-overlay">
-          <div className="lock-icon">🔒</div>
           <div className="lock-title">OPPONENT CARD</div>
           <div className="lock-desc">Revealed after game ends</div>
         </div>
@@ -736,27 +734,27 @@ function App() {
   const getTurnIndicatorText = () => {
     if (gameOver) return "";
     if (gameMode === "online") {
-      if (!opponentConnected) return "🔴 OPPONENT DISCONNECTED";
-      return currentPlayer === onlinePlayerNum ? "🟢 YOUR TURN" : "⏳ OPPONENT'S TURN";
+      if (!opponentConnected) return "OPPONENT DISCONNECTED";
+      return currentPlayer === onlinePlayerNum ? "YOUR TURN" : "OPPONENT'S TURN";
     }
-    if (gameMode === "ai") return currentPlayer === 1 ? "🟢 YOUR TURN" : "🤖 AI IS THINKING...";
-    return currentPlayer === 1 ? "🟢 PLAYER 1'S TURN" : "🔵 PLAYER 2'S TURN";
+    if (gameMode === "ai") return currentPlayer === 1 ? "YOUR TURN" : "AI IS THINKING...";
+    return currentPlayer === 1 ? "PLAYER 1'S TURN" : "PLAYER 2'S TURN";
   };
 
   const getBingoMessage = () => {
     if (gameMode === "online") {
-      if (winner === "player1") return onlinePlayerNum === 1 ? "🎉 BINGO! YOU WIN!" : "🎉 BINGO! PLAYER 1 WINS!";
-      if (winner === "player2") return onlinePlayerNum === 2 ? "🎉 BINGO! YOU WIN!" : "🎉 BINGO! PLAYER 2 WINS!";
-      if (winner === "draw") return "🤝 DRAW!";
+      if (winner === "player1") return onlinePlayerNum === 1 ? "BINGO! YOU WIN!" : "BINGO! PLAYER 1 WINS!";
+      if (winner === "player2") return onlinePlayerNum === 2 ? "BINGO! YOU WIN!" : "BINGO! PLAYER 2 WINS!";
+      if (winner === "draw") return "DRAW!";
       return null;
     }
-    if (winner === "player1") return gameMode === "ai" ? "🎉 BINGO! YOU WIN!" : "🎉 BINGO! PLAYER 1 WINS!";
-    if (winner === "player2") return gameMode === "ai" ? "🤖 BINGO! AI WINS!" : "🎉 BINGO! PLAYER 2 WINS!";
-    if (winner === "draw") return "🤝 DRAW!";
+    if (winner === "player1") return gameMode === "ai" ? "BINGO! YOU WIN!" : "BINGO! PLAYER 1 WINS!";
+    if (winner === "player2") return gameMode === "ai" ? "BINGO! AI WINS!" : "BINGO! PLAYER 2 WINS!";
+    if (winner === "draw") return "DRAW!";
     return null;
   };
 
-  const wsStatusLabel = wsStatus === "connecting" ? "🟡 CONNECTING" : wsStatus === "connected" ? "🟢 CONNECTED" : "🔴 DISCONNECTED";
+  const wsStatusLabel = wsStatus === "connecting" ? "CONNECTING" : wsStatus === "connected" ? "CONNECTED" : "DISCONNECTED";
   const wsStatusClass = wsStatus === "connecting" ? "conn-connecting" : wsStatus === "connected" ? "conn-online" : "conn-offline";
 
   const effectiveMyLines = myOnlineLines || calculatedMyOnlineLines;
@@ -769,17 +767,14 @@ function App() {
         <p className="subtitle">Choose your game mode</p>
         <div className="mode-selection-container">
           <button className="mode-card mode-ai" onClick={() => selectGameMode("ai")}>
-            <div className="mode-icon">🤖</div>
             <div className="mode-title">PLAY AGAINST AI</div>
             <div className="mode-desc">Challenge the computer in a single-player match</div>
           </button>
           <button className="mode-card mode-two-player" onClick={() => selectGameMode("two_player")}>
-            <div className="mode-icon">👥</div>
             <div className="mode-title">TWO PLAYER</div>
             <div className="mode-desc">Play locally with a friend on the same screen</div>
           </button>
           <button className="mode-card mode-online" onClick={() => selectGameMode("online")}>
-            <div className="mode-icon">🌐</div>
             <div className="mode-title">ONLINE MODE</div>
             <div className="mode-desc">Play real-time multiplayer with a private card</div>
           </button>
@@ -795,19 +790,19 @@ function App() {
         <p className="subtitle">CHOOSE DIFFICULTY</p>
         <div className="diff-selection-container">
           <button className="diff-card diff-easy" onClick={() => selectDifficultyAndStart("easy")}>
-            <div className="diff-badge">🟢 EASY</div>
+            <div className="diff-badge">EASY</div>
             <div className="diff-desc">AI chooses randomly and makes simple decisions.</div>
           </button>
           <button className="diff-card diff-medium" onClick={() => selectDifficultyAndStart("medium")}>
-            <div className="diff-badge">🟡 MEDIUM</div>
+            <div className="diff-badge">MEDIUM</div>
             <div className="diff-desc">AI tries to complete its own lines while occasionally blocking you.</div>
           </button>
           <button className="diff-card diff-hard" onClick={() => selectDifficultyAndStart("hard")}>
-            <div className="diff-badge">🔴 HARD</div>
+            <div className="diff-badge">HARD</div>
             <div className="diff-desc">AI intelligently prioritizes winning and blocking your strongest moves.</div>
           </button>
         </div>
-        <button className="btn btn-back" onClick={() => setScreen("mode_select")}>← BACK</button>
+        <button className="btn btn-back" onClick={() => setScreen("mode_select")}>BACK TO MODES</button>
       </div>
     );
   }
@@ -816,7 +811,7 @@ function App() {
     return (
       <div className="bingo-app mode-selection-page">
         <h1 className="title">BINGO</h1>
-        <p className="subtitle">🌐 ONLINE BINGO</p>
+        <p className="subtitle">ONLINE BINGO</p>
 
         <div className="online-status-bar">
           <span className={`ws-status-badge ${wsStatusClass}`}>{wsStatusLabel}</span>
@@ -830,7 +825,7 @@ function App() {
             <div>{onlineError}</div>
             {wsStatus === "disconnected" && (
               <button className="btn btn-retry" onClick={() => connectMultiplayer()}>
-                🔄 RETRY CONNECTION
+                RETRY CONNECTION
               </button>
             )}
           </div>
@@ -843,19 +838,17 @@ function App() {
                 className="lobby-action-card create-card"
                 onClick={handleCreateOnlineGame}
               >
-                <div className="lobby-card-icon">➕</div>
                 <div className="lobby-card-title">CREATE GAME</div>
                 <div className="lobby-card-desc">
                   {wsStatus === "connecting" ? "Connecting to server..." : "Generate a game code and wait for a friend"}
                 </div>
               </button>
               <button className="lobby-action-card join-card" onClick={() => setOnlineLobbyView("join")}>
-                <div className="lobby-card-icon">🔑</div>
                 <div className="lobby-card-title">JOIN GAME</div>
                 <div className="lobby-card-desc">Enter an existing game code to play with an opponent</div>
               </button>
             </div>
-            <button className="btn btn-back" onClick={handleChangeMode}>← BACK TO MODES</button>
+            <button className="btn btn-back" onClick={handleChangeMode}>BACK TO MODES</button>
           </div>
         )}
 
@@ -876,7 +869,7 @@ function App() {
                 <button className="btn btn-join-submit" onClick={handleJoinOnlineGame}>
                   {wsStatus === "connecting" ? "CONNECTING..." : "JOIN GAME"}
                 </button>
-                <button className="btn btn-back" onClick={() => setOnlineLobbyView("menu")}>← BACK</button>
+                <button className="btn btn-back" onClick={() => setOnlineLobbyView("menu")}>BACK</button>
               </div>
             </div>
           </div>
@@ -889,7 +882,7 @@ function App() {
               <div className="room-code-label">GAME CODE</div>
               <div className="room-code-display">{roomId}</div>
               <button className="btn btn-copy-code" onClick={handleCopyRoomCode}>
-                {copiedCode ? "✅ COPIED!" : "📋 COPY CODE"}
+                {copiedCode ? "COPIED!" : "COPY CODE"}
               </button>
               <div className="waiting-status-text">
                 <span className="spinner-dot"></span> Waiting for opponent to join...
@@ -916,11 +909,11 @@ function App() {
 
       {gameMode === "online" && (
         <div className="online-room-banner">
-          <span className="online-tag">🌐 ONLINE MODE</span>
+          <span className="online-tag">ONLINE MODE</span>
           <span className="room-badge">ROOM: {roomId}</span>
           <span className={`conn-tag ${wsStatusClass}`}>{wsStatusLabel}</span>
           <span className={`conn-tag ${opponentConnected ? "conn-online" : "conn-offline"}`}>
-            Opponent: {opponentConnected ? "🟢 Online" : "🔴 Disconnected"}
+            Opponent: {opponentConnected ? "Online" : "Disconnected"}
           </span>
         </div>
       )}
@@ -939,7 +932,7 @@ function App() {
         <div className="current-call">
           <span className="current-call-label">LAST CALLED NUMBER</span>
           <span className={`current-call-number ${lastCalledNumber === null ? "placeholder" : ""}`}>
-            {lastCalledNumber !== null ? lastCalledNumber : "—"}
+            {lastCalledNumber !== null ? lastCalledNumber : "-"}
           </span>
         </div>
         <div className="status-grid">
@@ -950,7 +943,7 @@ function App() {
           <div className="status-item">
             <span className="status-label">{gameMode === "online" ? "Opponent Lines" : gameMode === "ai" ? "AI Lines" : "Player 2 Lines"}</span>
             <span className="status-value p2-lines">
-              {gameMode === "online" ? (gameOver && opponentOnlineCard ? `${effectiveOppLines}/5` : "🔒 Hidden") : `${p2Lines}/5`}
+              {gameMode === "online" ? (gameOver && opponentOnlineCard ? `${effectiveOppLines}/5` : "Hidden") : `${p2Lines}/5`}
             </span>
           </div>
           <div className="status-item">
@@ -1007,7 +1000,6 @@ function App() {
                       onClick={() => clickable && handleNumberClick(onlinePlayerNum, number)}
                     >
                       <span className="cell-num">{number}</span>
-                      {isCalled && <span className="cell-check">✓</span>}
                       {isLastCalled && <span className="cell-last-badge">LAST</span>}
                     </div>
                   );
@@ -1032,7 +1024,6 @@ function App() {
                     return (
                       <div key={index} className={`bingo-cell ${onlinePlayerNum === 1 ? "p2-cell" : "p1-cell"} ${isCalled ? "called" : ""} ${isLineCell ? "line-cell" : ""} ${isLastCalled ? "last-called" : ""}`}>
                         <span className="cell-num">{number}</span>
-                        {isCalled && <span className="cell-check">✓</span>}
                       </div>
                     );
                   })}
@@ -1080,18 +1071,18 @@ function App() {
               onClick={handleRequestOnlineReset}
               disabled={onlineResetRequested || wsStatus !== "connected"}
             >
-              {onlineResetRequested ? "⏳ WAITING FOR OPPONENT..." : onlineOpponentResetRequested ? "🤝 ACCEPT NEW GAME" : "🔄 REQUEST NEW GAME"}
+              {onlineResetRequested ? "WAITING FOR OPPONENT..." : onlineOpponentResetRequested ? "ACCEPT NEW GAME" : "REQUEST NEW GAME"}
             </button>
-            <button className="btn btn-leave" onClick={handleLeaveOnlineGame}>🚪 LEAVE GAME</button>
-            <button className="btn btn-mode" onClick={handleChangeMode}>⚙️ CHANGE MODE</button>
+            <button className="btn btn-leave" onClick={handleLeaveOnlineGame}>LEAVE GAME</button>
+            <button className="btn btn-mode" onClick={handleChangeMode}>CHANGE MODE</button>
           </>
         ) : (
           <>
-            <button className="btn btn-reset" onClick={handleReset}>🔄 RESET GAME</button>
+            <button className="btn btn-reset" onClick={handleReset}>RESET GAME</button>
             {gameMode === "ai" && (
-              <button className="btn btn-diff" onClick={handleChangeDifficulty}>🎯 CHANGE DIFFICULTY</button>
+              <button className="btn btn-diff" onClick={handleChangeDifficulty}>CHANGE DIFFICULTY</button>
             )}
-            <button className="btn btn-mode" onClick={handleChangeMode}>⚙️ CHANGE MODE</button>
+            <button className="btn btn-mode" onClick={handleChangeMode}>CHANGE MODE</button>
           </>
         )}
       </div>
