@@ -1,96 +1,125 @@
-# 🎯 Real-Time Multiplayer Bingo
+# Real-Time Multiplayer Bingo
 
-A full-stack React & Node.js Bingo game with three modes:
-1. 🤖 **Play Against AI** (Easy, Medium, Hard)
-2. 👥 **Two Player** (Local pass-and-play)
-3. 🌐 **Online Mode** (Real-time WebSocket multiplayer with private cards)
+A full-stack Bingo gaming platform built with React, Vite, Node.js, and Supabase featuring Authentication, User Profiles, a Friend System, Real-Time Online Multiplayer, Online Match History, Statistics, and a complete Light/Dark Theme System.
 
----
-
-## 🏗️ Architecture
-
-* **Live Website**: [https://shaurya-7757.github.io/bingo/](https://shaurya-7757.github.io/bingo/)
-* **Frontend**: React + Vite (Hosted on GitHub Pages & Netlify/Vercel)
-* **Multiplayer Engine**:
-  * 🌐 **Serverless WebRTC Cloud (Default)**: 100% Free, Zero configuration, instant P2P rooms with zero card details.
-  * 🔌 **Optional WebSocket Server**: Node.js + `ws` (Deployable to Render/Railway for custom server hosting).
+Live Website: **[https://shaurya-7757.github.io/bingo/](https://shaurya-7757.github.io/bingo/)**
 
 ---
 
-## ⚙️ Environment Variables
+## Features
 
-Vite embeds environment variables prefixed with `VITE_` into the static JavaScript bundle at **build time**.
+### 1. Authentication & Session Persistence
+* **Sign Up**: Account registration with unique username, email, and password.
+* **Sign In**: Secure authentication using Supabase Auth or persistent local registry.
+* **Play as Guest**: 1-click temporary guest access (`GuestXXXX`) to jump straight into games without registration.
+* **Forgot Password**: Password reset request capability.
+* **Permanent Session**: Sessions and data are permanently retained across page refreshes, browser restarts, and device logins.
+* **Safe Sign Out**: Ending a session leaves online rooms safely without deleting user accounts, friends, or statistics.
 
-| Environment | Variable | Value | Where to Configure |
-| :--- | :--- | :--- | :--- |
-| **Local Development** | `VITE_WS_URL` | `ws://localhost:8080` | `.env` or `.env.local` |
-| **Production (Netlify)** | `VITE_WS_URL` | `wss://YOUR-BACKEND.onrender.com` | Netlify Dashboard ➔ Site configuration ➔ Environment variables |
+### 2. Light & Dark Theme System
+* **Light Mode (Yellow + White)**: Crisp white surfaces, dark charcoal text, warm amber/yellow primary buttons and accents.
+* **Dark Mode (Black + Red)**: Deep obsidian black surfaces, crisp white text, vibrant crimson red buttons and glowing accents.
+* **Theme Switcher**: Instant `[ LIGHT ]` / `[ DARK ]` toggle bar.
+* **Persistent Preference**: Theme choice persists across browser sessions.
+
+### 3. User Profile & Live Statistics
+* View username, email, account type (`REGISTERED MEMBER` or `GUEST ACCOUNT`), and joined date.
+* **All-Time Stats**: Games Played, Wins, Losses, Draws.
+* **Online Stats**: Online Games, Online Wins, Online Losses, Online Draws, and calculated **Win Rate %**.
+
+### 4. Friend System & Real-Time Game Invites
+* **My Friends**: Lists confirmed friends with live presence indicators (`ONLINE`, `IN GAME`, `OFFLINE`).
+* **Invite to Game**: Click `INVITE TO GAME` next to any friend to create an online room and trigger an instant invitation popup on their screen with `[ ACCEPT ]` and `[ DECLINE ]`.
+* **Friend Requests**: Dedicated tab for incoming friend requests with Accept and Decline actions.
+* **Add Friend**: Case-insensitive user search with instant request delivery.
+
+### 5. Online Match History
+* Records every completed online match with date, opponent username, outcome (`WIN`, `LOSS`, `DRAW`), final line scores (`6 - 4`), total numbers called, and last called number.
+* Interactive **Match Details Modal** for match review.
+
+### 6. Game Modes
+1. **Play Against AI**: 
+   - **EASY**: Random moves with fast decisions (~700ms).
+   - **MEDIUM**: Line completion detection, blocks player winning moves (~900ms).
+   - **HARD**: Multi-factor heuristic evaluation prioritizing line generation and multi-line blocks (~1150ms).
+   - Watchdog safety scheduler prevents freezes.
+2. **Two Player (Local)**:
+   - Pass-and-play on the same device.
+3. **Online Mode (Real-Time Multiplayer)**:
+   - 6-character room codes for easy sharing.
+   - Authoritative synchronized called numbers history visible to both host and joiner.
+   - Private opponent cards during play, revealed automatically on Game Over.
+   - Server-side 5-line Bingo win detection and draw validation.
 
 ---
 
-## 🚀 Local Development Checklist
+## Tech Stack & Architecture
 
-### 1. Start the WebSocket Backend
-```bash
-cd backend
-npm install
-npm start
+* **Frontend**: React 18, Vite, Vanilla CSS design tokens.
+* **Backend**: Node.js WebSocket server (`ws`), WebRTC Serverless fallback.
+* **Database & Auth**: Supabase (PostgreSQL, Supabase Auth, Row Level Security).
+
+---
+
+## Database Schema & Migrations
+
+The complete PostgreSQL migration script is located at [`supabase/schema.sql`](supabase/schema.sql):
+
+* `public.profiles`: Stores User ID, unique username, display name, online status (`online`, `in_game`, `offline`), and timestamp.
+* `public.friend_requests`: Handles pending, accepted, and declined friend requests.
+* `public.friends`: Stores verified two-way friendships.
+* `public.online_matches`: Stores completed multiplayer matches, line scores, and called numbers.
+* **Row Level Security (RLS)**: Enforces access control on all tables.
+* **Trigger**: `on_auth_user_created` automatically provisions a profile when a new user signs up in `auth.users`.
+
+---
+
+## Environment Variables
+
+See [`.env.example`](.env.example):
+
+```env
+# Frontend (Vite)
+VITE_SUPABASE_URL=https://your-project-id.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key-here
+VITE_WS_URL=
+
+# Backend (Node.js WebSocket Server)
+PORT=8080
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key-here
 ```
-*Console output:* `WebSocket server running on port 8080`
 
-### 2. Start the Frontend Dev Server (in project root)
+*(Note: The game features an automatic zero-break fallback, meaning guest play, local two-player, AI games, and multiplayer match history work out of the box even before Supabase keys are configured).*
+
+---
+
+## Local Development
+
+### 1. Install Dependencies
 ```bash
 npm install
+cd backend && npm install && cd ..
+```
+
+### 2. Run WebSocket Server (Optional for custom server mode)
+```bash
+npm run server
+```
+
+### 3. Run Frontend
+```bash
 npm run dev
 ```
-*Open:* `http://localhost:5173/`
+
+Open: `http://localhost:5173/`
+
+### 4. Build for Production
+```bash
+npm run build
+```
 
 ---
 
-## 🌐 Production Deployment Guide
-
-### Step 1: Deploy Backend to Render (or Railway)
-1. Go to [Render.com](https://render.com) and click **New Web Service**.
-2. Connect your Git repository.
-3. Configure the service:
-   * **Root Directory**: `backend`
-   * **Runtime**: `Node`
-   * **Build Command**: `npm install`
-   * **Start Command**: `npm start`
-4. Deploy the service and copy your Render URL (e.g. `https://my-bingo-backend.onrender.com`).
-5. Your WebSocket URL will be:
-   ```
-   wss://my-bingo-backend.onrender.com
-   ```
-
----
-
-### Step 2: Configure Netlify Environment Variable
-1. Log in to your [Netlify Dashboard](https://app.netlify.com/).
-2. Select your site: `kaleidoscopic-dieffenbachia-a1c45f`.
-3. Navigate to **Site configuration** ➔ **Environment variables**.
-4. Add a new variable:
-   * **Key**: `VITE_WS_URL`
-   * **Value**: `wss://my-bingo-backend.onrender.com` *(use `wss://`, not `https://`)*
-5. **Trigger a New Deploy**:
-   * Go to **Deploys** ➔ **Trigger deploy** ➔ **Deploy site**.
-   * *Why this is required:* Vite statically bakes `import.meta.env.VITE_WS_URL` into JavaScript assets during `npm run build`. Changing the variable in Netlify takes effect only after a rebuild/redeploy.
-
----
-
-## 🧪 Testing Multiplayer
-
-1. **Browser 1 (Creator)**:
-   * Navigate to the site ➔ Click **🌐 ONLINE MODE**.
-   * Status will show `🟢 CONNECTED` and `Server: <your-websocket-url>`.
-   * Click **➕ CREATE GAME** ➔ Copy the 6-character room code (e.g. `A7K4P2`).
-
-2. **Browser 2 / Incognito (Joiner)**:
-   * Open the site in another browser or Incognito window.
-   * Click **🌐 ONLINE MODE** ➔ **🔑 JOIN GAME**.
-   * Enter the room code and click **JOIN GAME**.
-
-3. **Gameplay**:
-   * Real-time synchronized turns.
-   * Player 1 and Player 2 cards remain completely private until game over.
-   * Server calculates 5-line Bingo wins and draws authoritatively.
+## License
+MIT
