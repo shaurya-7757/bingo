@@ -105,18 +105,25 @@ function getFilledCellCountForLine(card, lineIdx, calledSet) {
 }
 
 function chooseEasyMove(availableNumbers) {
+  if (!availableNumbers || availableNumbers.length === 0) return 1;
   return availableNumbers[Math.floor(Math.random() * availableNumbers.length)];
 }
 
 function chooseMediumMove(availableNumbers, aiCard, player1Card, calledSet) {
+  if (!availableNumbers || availableNumbers.length === 0) return 1;
+
+  // 1. Winning move for AI
   for (const num of availableNumbers) {
     const nextSet = new Set(calledSet).add(num);
     if (getCompletedLineIndices(aiCard, nextSet).length >= 5) return num;
   }
+  // 2. Block player's winning move
   for (const num of availableNumbers) {
     const nextSet = new Set(calledSet).add(num);
     if (getCompletedLineIndices(player1Card, nextSet).length >= 5) return num;
   }
+
+  // 3. Best line progress
   let bestScore = -1;
   let bestMoves = [];
   for (const num of availableNumbers) {
@@ -134,14 +141,23 @@ function chooseMediumMove(availableNumbers, aiCard, player1Card, calledSet) {
       bestMoves.push(num);
     }
   }
-  return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+
+  if (bestMoves.length > 0) {
+    return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+  }
+  return chooseEasyMove(availableNumbers);
 }
 
 function chooseHardMove(availableNumbers, aiCard, player1Card, calledSet) {
+  if (!availableNumbers || availableNumbers.length === 0) return 1;
+
+  // 1. Immediate Win
   for (const num of availableNumbers) {
     const nextSet = new Set(calledSet).add(num);
     if (getCompletedLineIndices(aiCard, nextSet).length >= 5) return num;
   }
+
+  // 2. Immediate Block
   const p1WinningBlocks = [];
   for (const num of availableNumbers) {
     const nextSet = new Set(calledSet).add(num);
@@ -150,9 +166,12 @@ function chooseHardMove(availableNumbers, aiCard, player1Card, calledSet) {
   if (p1WinningBlocks.length > 0) {
     return p1WinningBlocks[Math.floor(Math.random() * p1WinningBlocks.length)];
   }
+
+  // 3. Multi-factor heuristic
   const currentAiLines = getCompletedLineIndices(aiCard, calledSet).length;
   let bestScore = -Infinity;
   let bestMoves = [];
+
   for (const num of availableNumbers) {
     const nextSet = new Set(calledSet).add(num);
     const newAiLines = getCompletedLineIndices(aiCard, nextSet).length;
@@ -176,7 +195,11 @@ function chooseHardMove(availableNumbers, aiCard, player1Card, calledSet) {
       bestMoves.push(num);
     }
   }
-  return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+
+  if (bestMoves.length > 0) {
+    return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+  }
+  return chooseEasyMove(availableNumbers);
 }
 
 function getResolvedWsUrl() {
@@ -329,6 +352,23 @@ export function App() {
   const [winner, setWinner] = useState(null);
   const [aiThinking, setAiThinking] = useState(false);
 
+  // Up-to-date state references for timers & AI execution
+  const player1CardRef = useRef(player1Card);
+  const player2CardRef = useRef(player2Card);
+  const calledNumbersRef = useRef(calledNumbers);
+  const gameModeRef = useRef(gameMode);
+  const difficultyRef = useRef(difficulty);
+  const gameOverRef = useRef(gameOver);
+  const aiTimerRef = useRef(null);
+  const aiWatchdogRef = useRef(null);
+
+  useEffect(() => { player1CardRef.current = player1Card; }, [player1Card]);
+  useEffect(() => { player2CardRef.current = player2Card; }, [player2Card]);
+  useEffect(() => { calledNumbersRef.current = calledNumbers; }, [calledNumbers]);
+  useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
+  useEffect(() => { difficultyRef.current = difficulty; }, [difficulty]);
+  useEffect(() => { gameOverRef.current = gameOver; }, [gameOver]);
+
   // Online Multiplayer State
   const [onlinePlayerNum, setOnlinePlayerNum] = useState(1);
   const [onlinePlayer1Name, setOnlinePlayer1Name] = useState("Player 1");
@@ -379,6 +419,14 @@ export function App() {
 
   const clientRef = useRef(null);
   const currentRoomIdRef = useRef("");
+
+  // Clear all pending AI timers on unmount
+  useEffect(() => {
+    return () => {
+      if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+      if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current);
+    };
+  }, []);
 
   // Initialize Persistent Authentication on startup
   useEffect(() => {
@@ -691,6 +739,9 @@ export function App() {
   };
 
   const handleSignOut = async () => {
+    if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+    if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current);
+    setAiThinking(false);
     disconnectMultiplayer();
     await authService.signOut(currentUser);
     setCurrentUser(null);
@@ -717,7 +768,120 @@ export function App() {
   const effectiveMyLines = myOnlineLines || calculatedMyOnlineLines;
   const effectiveOppLines = opponentOnlineLines || calculatedOpponentOnlineLines;
 
-  // Local Game Flow & AI Turn
+  // ==============================================================================
+  // AUTHORITATIVE MOVE PROCESSOR & ROBUST AI SCHEDULER
+  // ==============================================================================
+
+  const scheduleAiTurn = useCallback((latestCalledNumbers) => {
+    if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+    if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current);
+
+    const diff = difficultyRef.current || "medium";
+    const delay = diff === "easy" ? 700 : diff === "hard" ? 1150 : 900;
+
+    // Safety watchdog: Guarantees AI will NEVER remain stuck on thinking
+    aiWatchdogRef.current = setTimeout(() => {
+      if (gameOverRef.current || gameModeRef.current !== "ai") return;
+      console.warn("AI Watchdog triggered - forcing AI move");
+      const currentSet = new Set(calledNumbersRef.current);
+      const avail = Array.from({ length: 25 }, (_, i) => i + 1).filter((n) => !currentSet.has(n));
+      if (avail.length > 0) {
+        applyLocalMove(chooseEasyMove(avail), 2);
+      } else {
+        setAiThinking(false);
+      }
+    }, 4500);
+
+    aiTimerRef.current = setTimeout(() => {
+      if (gameOverRef.current || gameModeRef.current !== "ai") return;
+
+      try {
+        const currentSet = new Set(latestCalledNumbers || calledNumbersRef.current);
+        const avail = Array.from({ length: 25 }, (_, i) => i + 1).filter((n) => !currentSet.has(n));
+
+        if (avail.length === 0) {
+          setAiThinking(false);
+          return;
+        }
+
+        let chosenNumber;
+        if (diff === "easy") {
+          chosenNumber = chooseEasyMove(avail);
+        } else if (diff === "hard") {
+          chosenNumber = chooseHardMove(avail, player2CardRef.current, player1CardRef.current, currentSet);
+        } else {
+          chosenNumber = chooseMediumMove(avail, player2CardRef.current, player1CardRef.current, currentSet);
+        }
+
+        // Validate selection
+        if (!chosenNumber || currentSet.has(chosenNumber) || !avail.includes(chosenNumber)) {
+          console.warn("AI returned invalid choice, using safe random fallback:", chosenNumber);
+          chosenNumber = chooseEasyMove(avail);
+        }
+
+        if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current);
+        applyLocalMove(chosenNumber, 2);
+      } catch (err) {
+        console.error("Error during AI turn execution:", err);
+        const currentSet = new Set(calledNumbersRef.current);
+        const avail = Array.from({ length: 25 }, (_, i) => i + 1).filter((n) => !currentSet.has(n));
+        if (avail.length > 0) {
+          applyLocalMove(chooseEasyMove(avail), 2);
+        } else {
+          setAiThinking(false);
+        }
+      }
+    }, delay);
+  }, []);
+
+  const applyLocalMove = useCallback((number, sourcePlayerNum) => {
+    if (gameOverRef.current) return;
+    if (calledNumbersRef.current.includes(number)) return;
+
+    const nextCalled = [...calledNumbersRef.current, number];
+    const nextCalledSet = new Set(nextCalled);
+    const newP1Lines = countCompletedLines(player1CardRef.current, nextCalledSet);
+    const newP2Lines = countCompletedLines(player2CardRef.current, nextCalledSet);
+
+    setCalledNumbers(nextCalled);
+    setLastCalledNumber(number);
+
+    const result = resolveGameResult(newP1Lines, newP2Lines, nextCalled.length);
+
+    if (result !== null) {
+      if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+      if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current);
+      setGameOver(true);
+      setWinner(result);
+      setAiThinking(false);
+
+      if (currentUser) {
+        historyService.recordLocalGameResult(
+          currentUser.id,
+          gameModeRef.current,
+          result === "player1" ? "win" : result === "player2" ? "loss" : "draw"
+        );
+        refreshStats();
+      }
+    } else {
+      if (gameModeRef.current === "ai") {
+        if (sourcePlayerNum === 1) {
+          // Human finished move -> switch to AI and schedule AI response
+          setCurrentPlayer(2);
+          setAiThinking(true);
+          scheduleAiTurn(nextCalled);
+        } else {
+          // AI finished move -> switch back to Human
+          setCurrentPlayer(1);
+          setAiThinking(false);
+        }
+      } else {
+        // Two player local mode
+        setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
+      }
+    }
+  }, [currentUser, refreshStats, scheduleAiTurn]);
+
   const handleNumberClick = (playerNum, number) => {
     if (gameMode === "online") {
       if (gameOver) return;
@@ -736,79 +900,13 @@ export function App() {
     if (gameMode === "two_player" && currentPlayer !== playerNum) return;
     if (calledSet.has(number)) return;
 
-    const newCalled = [...calledNumbers, number];
-    const newCalledSet = new Set(newCalled);
-    const newP1Lines = countCompletedLines(player1Card, newCalledSet);
-    const newP2Lines = countCompletedLines(player2Card, newCalledSet);
-
-    setCalledNumbers(newCalled);
-    setLastCalledNumber(number);
-
-    const result = resolveGameResult(newP1Lines, newP2Lines, newCalled.length);
-    if (result !== null) {
-      setGameOver(true);
-      setWinner(result);
-      if (currentUser) {
-        historyService.recordLocalGameResult(
-          currentUser.id,
-          gameMode,
-          result === "player1" ? "win" : result === "player2" ? "loss" : "draw"
-        );
-        refreshStats();
-      }
-    } else {
-      setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
-    }
+    applyLocalMove(number, playerNum);
   };
-
-  useEffect(() => {
-    if (gameMode !== "ai" || currentPlayer !== 2 || gameOver || aiThinking) return;
-
-    setAiThinking(true);
-    const timer = setTimeout(() => {
-      const allNumbers = Array.from({ length: 25 }, (_, i) => i + 1);
-      const available = allNumbers.filter((n) => !calledSet.has(n));
-      if (available.length === 0) {
-        setAiThinking(false);
-        return;
-      }
-
-      let chosen;
-      if (difficulty === "easy") chosen = chooseEasyMove(available);
-      else if (difficulty === "hard") chosen = chooseHardMove(available, player2Card, player1Card, calledSet);
-      else chosen = chooseMediumMove(available, player2Card, player1Card, calledSet);
-
-      const newCalled = [...calledNumbers, chosen];
-      const newCalledSet = new Set(newCalled);
-      const newP1Lines = countCompletedLines(player1Card, newCalledSet);
-      const newP2Lines = countCompletedLines(player2Card, newCalledSet);
-
-      setCalledNumbers(newCalled);
-      setLastCalledNumber(chosen);
-      setAiThinking(false);
-
-      const result = resolveGameResult(newP1Lines, newP2Lines, newCalled.length);
-      if (result !== null) {
-        setGameOver(true);
-        setWinner(result);
-        if (currentUser) {
-          historyService.recordLocalGameResult(
-            currentUser.id,
-            "ai",
-            result === "player1" ? "win" : result === "player2" ? "loss" : "draw"
-          );
-          refreshStats();
-        }
-      } else {
-        setCurrentPlayer(1);
-      }
-    }, 700);
-
-    return () => clearTimeout(timer);
-  }, [gameMode, currentPlayer, gameOver, aiThinking, calledSet, difficulty, player1Card, player2Card, calledNumbers, currentUser, refreshStats]);
 
   // Reset and Local Game Initialization
   const resetLocalGameState = () => {
+    if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+    if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current);
     setPlayer1Card(createShuffledCard());
     setPlayer2Card(createShuffledCard());
     setCalledNumbers([]);
@@ -820,6 +918,8 @@ export function App() {
   };
 
   const startNewLocalGame = (mode) => {
+    if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+    if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current);
     setGameMode(mode);
     resetLocalGameState();
     setScreen("game");
@@ -851,6 +951,9 @@ export function App() {
   };
 
   const handleLeaveOnlineGame = () => {
+    if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+    if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current);
+    setAiThinking(false);
     disconnectMultiplayer();
     setScreen("main_menu");
   };
@@ -1880,11 +1983,11 @@ export function App() {
               RESET GAME
             </button>
             {gameMode === "ai" && (
-              <button className="btn btn-diff" onClick={() => setScreen("diff_select")}>
+              <button className="btn btn-diff" onClick={() => { if (aiTimerRef.current) clearTimeout(aiTimerRef.current); if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current); setAiThinking(false); setScreen("diff_select"); }}>
                 CHANGE DIFFICULTY
               </button>
             )}
-            <button className="btn btn-mode" onClick={() => setScreen("main_menu")}>
+            <button className="btn btn-mode" onClick={() => { if (aiTimerRef.current) clearTimeout(aiTimerRef.current); if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current); setAiThinking(false); setScreen("main_menu"); }}>
               MAIN MENU
             </button>
           </>
