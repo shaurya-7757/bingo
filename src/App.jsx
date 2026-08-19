@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { MultiplayerClient } from "./multiplayer";
 import "./App.css";
 
 function shuffleArray(array) {
@@ -312,17 +313,15 @@ function App() {
   const [onlineResetRequested, setOnlineResetRequested] = useState(false);
   const [onlineOpponentResetRequested, setOnlineOpponentResetRequested] = useState(false);
 
-  // WebSocket connection state
+  // Multiplayer client state
   const [wsStatus, setWsStatus] = useState("disconnected"); // "connecting" | "connected" | "disconnected"
   const [myOnlineLines, setMyOnlineLines] = useState(0);
   const [opponentOnlineLines, setOpponentOnlineLines] = useState(0);
 
-  const wsRef = useRef(null);
+  const clientRef = useRef(null);
   const aiTimeoutRef = useRef(null);
   const playerIdRef = useRef(getStoredPlayerId());
   const currentRoomIdRef = useRef("");
-  const connectTimeoutRef = useRef(null);
-  const pendingActionRef = useRef(null);
 
   const activeWsUrl = getResolvedWsUrl();
 
@@ -333,247 +332,142 @@ function App() {
     }
   };
 
-  const clearConnectTimeout = () => {
-    if (connectTimeoutRef.current) {
-      clearTimeout(connectTimeoutRef.current);
-      connectTimeoutRef.current = null;
+  const handleMultiplayerMessage = useCallback((data) => {
+    if (!data) return;
+
+    if (data.type === "connected") {
+      setWsStatus("connected");
+      return;
     }
-  };
 
-  const disconnectWebSocket = useCallback(() => {
-    clearConnectTimeout();
-    pendingActionRef.current = null;
+    if (data.type === "room_created") {
+      currentRoomIdRef.current = data.roomId;
+      setRoomId(data.roomId);
+      setOnlinePlayerNum(data.playerNum || 1);
+      setOnlinePlayerCount(data.playerCount || 1);
+      const card = data.ownCard || data.myCard || [];
+      setMyOnlineCard(card);
+      setOpponentOnlineCard(null);
+      setOnlineError("");
+      setOnlineLobbyView("waiting");
+      return;
+    }
 
-    if (wsRef.current) {
-      try {
-        if (wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: "leave_room" }));
-        }
-        wsRef.current.onopen = null;
-        wsRef.current.onmessage = null;
-        wsRef.current.onerror = null;
-        wsRef.current.onclose = null;
-        wsRef.current.close();
-      } catch (e) {
-        console.error("Error closing WebSocket:", e);
+    if (data.type === "room_joined") {
+      currentRoomIdRef.current = data.roomId;
+      setRoomId(data.roomId);
+      setOnlinePlayerNum(data.playerNum || 2);
+      const card = data.ownCard || data.myCard || [];
+      setMyOnlineCard(card);
+      setOpponentOnlineCard(null);
+      setOnlineError("");
+      return;
+    }
+
+    if (data.type === "game_started") {
+      setScreen("game");
+      setOnlineError("");
+      return;
+    }
+
+    if (data.type === "invalid_move" || data.type === "error") {
+      setOnlineError(data.message || "An error occurred.");
+      return;
+    }
+
+    if (data.type === "game_state") {
+      if (data.roomId) {
+        currentRoomIdRef.current = data.roomId;
+        setRoomId(data.roomId);
       }
-      wsRef.current = null;
+      if (data.playerNum) setOnlinePlayerNum(data.playerNum);
+      const card = data.ownCard || data.myCard;
+      if (card && card.length === 25) setMyOnlineCard(card);
+
+      setCalledNumbers(data.calledNumbers || []);
+      setLastCalledNumber(data.lastCalledNumber != null ? data.lastCalledNumber : null);
+      setCurrentPlayer(data.currentTurn || 1);
+      setGameOver(!!data.gameOver);
+      setWinner(data.winner || null);
+      setOpponentConnected(data.opponentConnected !== false);
+      setOnlineResetRequested(!!data.myResetRequested);
+      setOnlineOpponentResetRequested(!!data.resetRequestedByOpponent);
+
+      if (typeof data.myLines === "number") {
+        setMyOnlineLines(data.myLines);
+      }
+
+      if (data.gameOver) {
+        const myNum = data.playerNum || onlinePlayerNum;
+        if (typeof data.player1Lines === "number" || typeof data.player2Lines === "number") {
+          const oppLines = myNum === 1 ? data.player2Lines : data.player1Lines;
+          if (typeof oppLines === "number") setOpponentOnlineLines(oppLines);
+        }
+        const oppCard = data.opponentCard || (myNum === 1 ? data.player2Card : data.player1Card);
+        if (oppCard) setOpponentOnlineCard(oppCard);
+      } else {
+        setOpponentOnlineCard(null);
+      }
+
+      if (data.gameStatus === "in_progress" || data.gameStatus === "game_over" || data.gameStatus === "opponent_disconnected") {
+        setScreen("game");
+      } else if (data.gameStatus === "waiting") {
+        setOnlinePlayerCount(data.playerCount || 1);
+        setOnlineLobbyView("waiting");
+      }
+      return;
+    }
+
+    if (data.type === "restart_request") {
+      setOnlineOpponentResetRequested(true);
+      return;
+    }
+
+    if (data.type === "restart_accepted") {
+      setOnlineResetRequested(false);
+      setOnlineOpponentResetRequested(false);
+      return;
+    }
+
+    if (data.type === "restart_declined") {
+      setOnlineResetRequested(false);
+      setOnlineOpponentResetRequested(false);
+      setOnlineError(data.message || "Opponent declined new game.");
+      return;
+    }
+  }, [onlinePlayerNum]);
+
+  const getClient = useCallback(() => {
+    if (!clientRef.current) {
+      clientRef.current = new MultiplayerClient({
+        wsUrl: getResolvedWsUrl(),
+        onStatusChange: (status) => setWsStatus(status),
+        onError: (errMsg) => setOnlineError(errMsg),
+        onMessage: handleMultiplayerMessage,
+      });
+    }
+    return clientRef.current;
+  }, [handleMultiplayerMessage]);
+
+  const disconnectMultiplayer = useCallback(() => {
+    if (clientRef.current) {
+      clientRef.current.disconnect();
+      clientRef.current = null;
     }
     setWsStatus("disconnected");
   }, []);
 
-  const connectWebSocket = useCallback((onOpenCallback) => {
-    clearConnectTimeout();
-
-    const wsUrl = getResolvedWsUrl();
-
-    if (!wsUrl) {
-      setWsStatus("disconnected");
-      setOnlineError(
-        "WebSocket URL is not configured. Please set the VITE_WS_URL environment variable in Netlify settings (e.g. wss://your-backend.onrender.com) and redeploy."
-      );
-      return;
-    }
-
-    if (wsRef.current) {
-      if (wsRef.current.readyState === WebSocket.OPEN) {
-        setWsStatus("connected");
-        if (onOpenCallback) onOpenCallback(wsRef.current);
-        return;
-      }
-      if (wsRef.current.readyState === WebSocket.CONNECTING) {
-        if (onOpenCallback) pendingActionRef.current = onOpenCallback;
-        return;
-      }
-      try {
-        wsRef.current.close();
-      } catch {}
-      wsRef.current = null;
-    }
-
-    console.log("WebSocket connecting to:", wsUrl);
-    setWsStatus("connecting");
-    setOnlineError("");
-
-    if (onOpenCallback) {
-      pendingActionRef.current = onOpenCallback;
-    }
-
-    let socket;
-    try {
-      socket = new WebSocket(wsUrl);
-    } catch (err) {
-      console.error("Failed to construct WebSocket:", err);
-      setWsStatus("disconnected");
-      setOnlineError("Unable to connect to the game server. Check the server URL: " + wsUrl);
-      return;
-    }
-
-    wsRef.current = socket;
-
-    // 10-second connection timeout guard
-    connectTimeoutRef.current = setTimeout(() => {
-      if (socket && socket.readyState === WebSocket.CONNECTING) {
-        console.warn("WebSocket connection timed out after 10s");
-        try { socket.close(); } catch {}
-        setWsStatus("disconnected");
-        setOnlineError(
-          "Could not connect to the game server (" + wsUrl + "). Make sure your Render/Railway backend is running."
-        );
-      }
-    }, 10000);
-
-    socket.onopen = () => {
-      clearConnectTimeout();
-      console.log("WebSocket connected successfully to:", wsUrl);
-      setWsStatus("connected");
-      setOnlineError("");
-
-      if (pendingActionRef.current) {
-        const action = pendingActionRef.current;
-        pendingActionRef.current = null;
-        action(socket);
-      }
-    };
-
-    socket.onmessage = (event) => {
-      let data;
-      try {
-        data = JSON.parse(event.data);
-      } catch (err) {
-        console.error("Malformed WebSocket message received:", event.data);
-        return;
-      }
-
-      console.log("WebSocket message received:", data);
-
-      if (data.type === "connected") {
-        setWsStatus("connected");
-        return;
-      }
-
-      if (data.type === "room_created") {
-        currentRoomIdRef.current = data.roomId;
-        setRoomId(data.roomId);
-        setOnlinePlayerNum(data.playerNum || 1);
-        setOnlinePlayerCount(data.playerCount || 1);
-        const card = data.ownCard || data.myCard || [];
-        setMyOnlineCard(card);
-        setOpponentOnlineCard(null);
-        setOnlineError("");
-        setOnlineLobbyView("waiting");
-        return;
-      }
-
-      if (data.type === "room_joined") {
-        currentRoomIdRef.current = data.roomId;
-        setRoomId(data.roomId);
-        setOnlinePlayerNum(data.playerNum || 2);
-        const card = data.ownCard || data.myCard || [];
-        setMyOnlineCard(card);
-        setOpponentOnlineCard(null);
-        setOnlineError("");
-        return;
-      }
-
-      if (data.type === "game_started") {
-        setScreen("game");
-        setOnlineError("");
-        return;
-      }
-
-      if (data.type === "invalid_move" || data.type === "error") {
-        setOnlineError(data.message || "An error occurred.");
-        return;
-      }
-
-      if (data.type === "game_state") {
-        if (data.roomId) {
-          currentRoomIdRef.current = data.roomId;
-          setRoomId(data.roomId);
-        }
-        if (data.playerNum) setOnlinePlayerNum(data.playerNum);
-        const card = data.ownCard || data.myCard;
-        if (card && card.length === 25) setMyOnlineCard(card);
-
-        setCalledNumbers(data.calledNumbers || []);
-        setLastCalledNumber(data.lastCalledNumber != null ? data.lastCalledNumber : null);
-        setCurrentPlayer(data.currentTurn || 1);
-        setGameOver(!!data.gameOver);
-        setWinner(data.winner || null);
-        setOpponentConnected(data.opponentConnected !== false);
-        setOnlineResetRequested(!!data.myResetRequested);
-        setOnlineOpponentResetRequested(!!data.resetRequestedByOpponent);
-
-        if (typeof data.myLines === "number") {
-          setMyOnlineLines(data.myLines);
-        }
-
-        if (data.gameOver) {
-          const myNum = data.playerNum || onlinePlayerNum;
-          if (typeof data.player1Lines === "number" || typeof data.player2Lines === "number") {
-            const oppLines = myNum === 1 ? data.player2Lines : data.player1Lines;
-            if (typeof oppLines === "number") setOpponentOnlineLines(oppLines);
-          }
-          const oppCard = data.opponentCard || (myNum === 1 ? data.player2Card : data.player1Card);
-          if (oppCard) setOpponentOnlineCard(oppCard);
-        } else {
-          setOpponentOnlineCard(null);
-        }
-
-        if (data.gameStatus === "in_progress" || data.gameStatus === "game_over" || data.gameStatus === "opponent_disconnected") {
-          setScreen("game");
-        } else if (data.gameStatus === "waiting") {
-          setOnlinePlayerCount(data.playerCount || 1);
-          setOnlineLobbyView("waiting");
-        }
-        return;
-      }
-
-      if (data.type === "restart_request") {
-        setOnlineOpponentResetRequested(true);
-        return;
-      }
-
-      if (data.type === "restart_accepted") {
-        setOnlineResetRequested(false);
-        setOnlineOpponentResetRequested(false);
-        return;
-      }
-
-      if (data.type === "restart_declined") {
-        setOnlineResetRequested(false);
-        setOnlineOpponentResetRequested(false);
-        setOnlineError(data.message || "Opponent declined new game.");
-        return;
-      }
-    };
-
-    socket.onerror = (err) => {
-      console.error("WebSocket error:", err);
-      clearConnectTimeout();
-      setWsStatus("disconnected");
-      setOnlineError(
-        "Unable to connect to WebSocket server at " +
-          wsUrl +
-          ". Check your internet connection and verify the backend is running."
-      );
-    };
-
-    socket.onclose = (evt) => {
-      console.warn("WebSocket closed. Code:", evt.code, "Reason:", evt.reason);
-      clearConnectTimeout();
-      setWsStatus("disconnected");
-      setOpponentConnected(false);
-    };
-  }, [onlinePlayerNum]);
+  const connectMultiplayer = useCallback((onReady) => {
+    const client = getClient();
+    client.connect(onReady);
+  }, [getClient]);
 
   // Connect automatically when opening online mode
   useEffect(() => {
     if (screen === "online_lobby" && wsStatus === "disconnected") {
-      connectWebSocket();
+      connectMultiplayer();
     }
-  }, [screen, wsStatus, connectWebSocket]);
+  }, [screen, wsStatus, connectMultiplayer]);
 
   const calledSet = useMemo(() => new Set(calledNumbers), [calledNumbers]);
 
@@ -617,19 +511,7 @@ function App() {
       if (currentPlayer !== onlinePlayerNum) return;
       if (calledSet.has(number)) return;
 
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        setOnlineError("Not connected to server. Reconnecting...");
-        connectWebSocket();
-        return;
-      }
-
-      wsRef.current.send(
-        JSON.stringify({
-          type: "select_number",
-          roomId: currentRoomIdRef.current || roomId,
-          number: number,
-        })
-      );
+      getClient().selectNumber(number);
       return;
     }
 
@@ -680,10 +562,10 @@ function App() {
     setOnlineError("");
 
     if (mode === "two_player") {
-      disconnectWebSocket();
+      disconnectMultiplayer();
       startNewLocalGame("two_player", difficulty);
     } else if (mode === "ai") {
-      disconnectWebSocket();
+      disconnectMultiplayer();
       setScreen("diff_select");
     } else if (mode === "online") {
       setScreen("online_lobby");
@@ -691,7 +573,7 @@ function App() {
       setRoomId("");
       setJoinCodeInput("");
       resetOnlineState();
-      connectWebSocket();
+      connectMultiplayer();
     }
   };
 
@@ -718,20 +600,9 @@ function App() {
 
   const handleCreateOnlineGame = () => {
     setOnlineError("");
-    const sendCreate = (socket) => {
-      socket.send(
-        JSON.stringify({
-          type: "create_room",
-          playerId: playerIdRef.current,
-        })
-      );
-    };
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      sendCreate(wsRef.current);
-    } else {
-      connectWebSocket(sendCreate);
-    }
+    connectMultiplayer(() => {
+      getClient().createRoom(playerIdRef.current);
+    });
   };
 
   const handleJoinOnlineGame = () => {
@@ -741,22 +612,9 @@ function App() {
       return;
     }
     setOnlineError("");
-
-    const sendJoin = (socket) => {
-      socket.send(
-        JSON.stringify({
-          type: "join_room",
-          roomId: cleanCode,
-          playerId: playerIdRef.current,
-        })
-      );
-    };
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      sendJoin(wsRef.current);
-    } else {
-      connectWebSocket(sendJoin);
-    }
+    connectMultiplayer(() => {
+      getClient().joinRoom(cleanCode, playerIdRef.current);
+    });
   };
 
   const handleCopyRoomCode = () => {
@@ -789,16 +647,12 @@ function App() {
   };
 
   const handleRequestOnlineReset = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "request_restart" }));
-      setOnlineResetRequested(true);
-    } else {
-      setOnlineError("Not connected to game server.");
-    }
+    getClient().requestRestart();
+    setOnlineResetRequested(true);
   };
 
   const handleLeaveOnlineGame = () => {
-    disconnectWebSocket();
+    disconnectMultiplayer();
     currentRoomIdRef.current = "";
     setScreen("mode_select");
     setGameMode(null);
@@ -827,7 +681,7 @@ function App() {
 
   const handleChangeMode = () => {
     clearAiTimeout();
-    disconnectWebSocket();
+    disconnectMultiplayer();
     currentRoomIdRef.current = "";
     setScreen("mode_select");
     setGameMode(null);
@@ -955,15 +809,15 @@ function App() {
         <div className="online-status-bar">
           <span className={`ws-status-badge ${wsStatusClass}`}>{wsStatusLabel}</span>
           <span className="ws-debug-info">
-            Server: <code>{activeWsUrl || "NOT CONFIGURED (VITE_WS_URL missing)"}</code>
+            Multiplayer Engine: <code>{activeWsUrl ? `WebSocket (${activeWsUrl})` : "WebRTC P2P (100% Free - Serverless)"}</code>
           </span>
         </div>
 
         {onlineError && (
           <div className="online-error-banner">
             <div>{onlineError}</div>
-            {wsStatus === "disconnected" && activeWsUrl && (
-              <button className="btn btn-retry" onClick={() => connectWebSocket()}>
+            {wsStatus === "disconnected" && (
+              <button className="btn btn-retry" onClick={() => connectMultiplayer()}>
                 🔄 RETRY CONNECTION
               </button>
             )}
