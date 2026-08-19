@@ -1,4 +1,4 @@
-﻿# 🎯 Real-Time Multiplayer Bingo
+# 🎯 Real-Time Multiplayer Bingo
 
 A full-stack React & Node.js Bingo game with three modes:
 1. 🤖 **Play Against AI** (Easy, Medium, Hard)
@@ -9,13 +9,11 @@ A full-stack React & Node.js Bingo game with three modes:
 
 ## 🏗️ Architecture
 
-* **Frontend**: React + Vite (Static Single-Page Application hosted on Netlify)
-  * Live URL: `https://kaleidoscopic-dieffenbachia-a1c45f.netlify.app`
-* **Backend**: Node.js + `ws` WebSocket Server (Deployable on Render, Railway, etc.)
-  * Local URL: `ws://localhost:8080`
-  * Production URL: `wss://YOUR-BACKEND-NAME.onrender.com`
-
-> ⚠️ **Important Architecture Note**: Netlify is a static CDN host and **cannot** run Node.js WebSocket servers. The WebSocket backend must be deployed to a server environment like **Render** or **Railway**.
+* **Live Website**: [https://shaurya-7757.github.io/bingo/](https://shaurya-7757.github.io/bingo/)
+* **Frontend**: React + Vite (Hosted on GitHub Pages & Netlify/Vercel)
+* **Multiplayer Engine**:
+  * 🌐 **Serverless WebRTC Cloud (Default)**: 100% Free, Zero configuration, instant P2P rooms with zero card details.
+  * 🔌 **Optional WebSocket Server**: Node.js + `ws` (Deployable to Render/Railway for custom server hosting).
 
 ---
 
