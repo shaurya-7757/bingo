@@ -1,5 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { MultiplayerClient } from "./multiplayer";
+import * as authService from "./services/authService";
+import * as friendService from "./services/friendService";
+import * as historyService from "./services/historyService";
 import "./App.css";
 
 function shuffleArray(array) {
@@ -148,25 +151,24 @@ function chooseHardMove(availableNumbers, aiCard, player1Card, calledSet) {
     return p1WinningBlocks[Math.floor(Math.random() * p1WinningBlocks.length)];
   }
   const currentAiLines = getCompletedLineIndices(aiCard, calledSet).length;
-  const currentP1Lines = getCompletedLineIndices(player1Card, calledSet).length;
   let bestScore = -Infinity;
   let bestMoves = [];
   for (const num of availableNumbers) {
     const nextSet = new Set(calledSet).add(num);
-    const aiLines = getCompletedLineIndices(aiCard, nextSet).length;
-    const p1Lines = getCompletedLineIndices(player1Card, nextSet).length;
-    const aiLineGain = aiLines - currentAiLines;
-    const p1LineGain = p1Lines - currentP1Lines;
-    let aiNear4 = 0, aiNear3 = 0, p1Near4 = 0;
+    const newAiLines = getCompletedLineIndices(aiCard, nextSet).length;
+    const linesGained = newAiLines - currentAiLines;
+    let aiFourCount = 0, aiThreeCount = 0;
     for (let i = 0; i < LINE_DEFS.length; i++) {
-      const c = getFilledCellCountForLine(aiCard, i, nextSet);
-      if (c === 4) aiNear4++;
-      if (c === 3) aiNear3++;
+      const filled = getFilledCellCountForLine(aiCard, i, nextSet);
+      if (filled === 4) aiFourCount++;
+      else if (filled === 3) aiThreeCount++;
     }
+    let p1Blocks = 0;
     for (let i = 0; i < LINE_DEFS.length; i++) {
-      if (getFilledCellCountForLine(player1Card, i, nextSet) === 4) p1Near4++;
+      const p1Filled = getFilledCellCountForLine(player1Card, i, calledSet);
+      if (p1Filled === 3 && player1Card.includes(num)) p1Blocks++;
     }
-    const score = aiLineGain * 5000 + p1LineGain * 3000 + aiNear4 * 500 + aiNear3 * 100 + p1Near4 * 50;
+    const score = linesGained * 100 + aiFourCount * 30 + p1Blocks * 20 + aiThreeCount * 5;
     if (score > bestScore) {
       bestScore = score;
       bestMoves = [num];
@@ -177,23 +179,39 @@ function chooseHardMove(availableNumbers, aiCard, player1Card, calledSet) {
   return bestMoves[Math.floor(Math.random() * bestMoves.length)];
 }
 
-function chooseAIMove(difficulty, availableNumbers, aiCard, player1Card, calledSet) {
-  if (difficulty === "easy") return chooseEasyMove(availableNumbers);
-  if (difficulty === "medium") return chooseMediumMove(availableNumbers, aiCard, player1Card, calledSet);
-  return chooseHardMove(availableNumbers, aiCard, player1Card, calledSet);
+function getResolvedWsUrl() {
+  const envUrl = import.meta.env.VITE_WS_URL;
+  if (envUrl && envUrl.trim()) return envUrl.trim();
+  const isLocalhost =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+  if (isLocalhost) {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${window.location.hostname}:8080`;
+  }
+  return null;
 }
 
-function BingoCard({ card, calledSet, completedCellSet, playerNum, isActive, lines, cardStatus, onNumberClick, gameMode, lastCalledNumber }) {
-  const isPlayer1 = playerNum === 1;
-  const isAiMode = gameMode === "ai";
-  const label = isPlayer1 ? (isAiMode ? "YOUR CARD" : "PLAYER 1 CARD") : (isAiMode ? "AI CARD" : "PLAYER 2 CARD");
-  const lineLabel = isPlayer1 ? (isAiMode ? "YOUR" : "PLAYER 1") : (isAiMode ? "AI" : "PLAYER 2");
-  const variant = isPlayer1 ? "p1" : "p2";
+function BingoCard({
+  card,
+  calledSet,
+  completedCellSet,
+  playerNum,
+  isActive,
+  lines,
+  cardStatus,
+  onNumberClick,
+  playerLabel,
+  lastCalledNumber,
+}) {
+  const variant = playerNum === 1 ? "p1" : "p2";
+  const title = playerLabel || `PLAYER ${playerNum}`;
+
   return (
     <div className={`card-section ${variant}-section ${isActive ? "active-card" : "inactive-card"}`}>
-      <h3 className="card-label">{label}</h3>
+      <h3 className="card-label">{title}</h3>
       <div className="card-meta">
-        <span className="card-lines">{lineLabel} LINES: {lines}/5</span>
+        <span className="card-lines">LINES: {lines}/5</span>
         <span className={`card-status card-status-${cardStatus.type}`}>{cardStatus.text}</span>
       </div>
       <div className={`bingo-grid ${variant}-grid`}>
@@ -218,11 +236,11 @@ function BingoCard({ card, calledSet, completedCellSet, playerNum, isActive, lin
   );
 }
 
-function HiddenOpponentCard({ opponentConnected }) {
+function HiddenOpponentCard({ opponentConnected, opponentLabel }) {
   const placeholderCells = Array.from({ length: 25 }, (_, i) => i);
   return (
     <div className="card-section p2-section inactive-card online-hidden-opponent">
-      <h3 className="card-label">OPPONENT CARD</h3>
+      <h3 className="card-label">{opponentLabel || "OPPONENT CARD"}</h3>
       <div className="card-meta">
         <span className="card-lines">OPPONENT: HIDDEN</span>
         <span className={`card-status ${opponentConnected ? "card-status-wait" : "card-status-lose"}`}>
@@ -242,59 +260,25 @@ function HiddenOpponentCard({ opponentConnected }) {
   );
 }
 
-function generatePlayerId() {
-  return "pid_" + Math.random().toString(36).substring(2, 11);
-}
+export function App() {
+  // Authentication & User State
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authMode, setAuthMode] = useState("signin"); // "signin", "signup", "forgot"
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authConfirmPassword, setAuthConfirmPassword] = useState("");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authSuccess, setAuthSuccess] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
 
-function getStoredPlayerId() {
-  try {
-    let id = sessionStorage.getItem("bingo_player_id");
-    if (!id) {
-      id = generatePlayerId();
-      sessionStorage.setItem("bingo_player_id", id);
-    }
-    return id;
-  } catch {
-    return generatePlayerId();
-  }
-}
-
-/**
- * Resolves the WebSocket URL:
- * 1. If import.meta.env.VITE_WS_URL is provided, use it.
- * 2. If running locally (localhost / 127.0.0.1), fall back to ws://localhost:8080.
- * 3. On deployed static hosts (e.g. Netlify), DO NOT default to the Netlify domain!
- *    Return null so we can prompt the user to configure VITE_WS_URL.
- */
-function getResolvedWsUrl() {
-  const envUrl = (import.meta.env.VITE_WS_URL || "").trim();
-
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname || "";
-    const isLocalhost =
-      host === "localhost" ||
-      host === "127.0.0.1" ||
-      host.startsWith("192.168.") ||
-      host.startsWith("172.") ||
-      host.endsWith(".local");
-
-    // If on a public deployed website and envUrl points to localhost, ignore it to use free P2P
-    if (!isLocalhost && envUrl && (envUrl.includes("localhost") || envUrl.includes("127.0.0.1"))) {
-      return null;
-    }
-
-    if (envUrl && !envUrl.includes("localhost")) return envUrl;
-    if (isLocalhost) return "ws://" + host + ":8080";
-  }
-
-  return envUrl || null;
-}
-
-function App() {
-  const [screen, setScreen] = useState("mode_select");
-  const [gameMode, setGameMode] = useState(null);
+  // App Navigation Screens: "auth", "main_menu", "diff_select", "online_lobby", "friends", "history", "profile", "game"
+  const [screen, setScreen] = useState("auth");
+  const [gameMode, setGameMode] = useState("ai"); // "ai", "two_player", "online"
   const [difficulty, setDifficulty] = useState("medium");
 
+  // Local Game State
   const [player1Card, setPlayer1Card] = useState(() => createShuffledCard());
   const [player2Card, setPlayer2Card] = useState(() => createShuffledCard());
   const [calledNumbers, setCalledNumbers] = useState([]);
@@ -304,38 +288,94 @@ function App() {
   const [winner, setWinner] = useState(null);
   const [aiThinking, setAiThinking] = useState(false);
 
-  const [onlineLobbyView, setOnlineLobbyView] = useState("menu");
-  const [roomId, setRoomId] = useState("");
-  const [joinCodeInput, setJoinCodeInput] = useState("");
+  // Online Multiplayer State
   const [onlinePlayerNum, setOnlinePlayerNum] = useState(1);
-  const [onlinePlayerCount, setOnlinePlayerCount] = useState(1);
+  const [onlinePlayer1Name, setOnlinePlayer1Name] = useState("Player 1");
+  const [onlinePlayer2Name, setOnlinePlayer2Name] = useState("Player 2");
   const [myOnlineCard, setMyOnlineCard] = useState([]);
   const [opponentOnlineCard, setOpponentOnlineCard] = useState(null);
-  const [opponentConnected, setOpponentConnected] = useState(true);
-  const [onlineError, setOnlineError] = useState("");
-  const [copiedCode, setCopiedCode] = useState(false);
-  const [onlineResetRequested, setOnlineResetRequested] = useState(false);
-  const [onlineOpponentResetRequested, setOnlineOpponentResetRequested] = useState(false);
-
-  // Multiplayer client state
-  const [wsStatus, setWsStatus] = useState("disconnected"); // "connecting" | "connected" | "disconnected"
   const [myOnlineLines, setMyOnlineLines] = useState(0);
   const [opponentOnlineLines, setOpponentOnlineLines] = useState(0);
+  const [roomId, setRoomId] = useState("");
+  const [onlineLobbyView, setOnlineLobbyView] = useState("menu"); // "menu", "join", "waiting"
+  const [joinCodeInput, setJoinCodeInput] = useState("");
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [onlinePlayerCount, setOnlinePlayerCount] = useState(1);
+  const [opponentConnected, setOpponentConnected] = useState(true);
+  const [onlineResetRequested, setOnlineResetRequested] = useState(false);
+  const [onlineOpponentResetRequested, setOnlineOpponentResetRequested] = useState(false);
+  const [onlineError, setOnlineError] = useState("");
+  const [wsStatus, setWsStatus] = useState("disconnected");
+
+  // Friend System State
+  const [friendsTab, setFriendsTab] = useState("my_friends"); // "my_friends", "requests", "add"
+  const [friendsList, setFriendsList] = useState([]);
+  const [friendRequests, setFriendRequests] = useState([]);
+  const [friendSearchQuery, setFriendSearchQuery] = useState("");
+  const [friendSearchResults, setFriendSearchResults] = useState([]);
+  const [friendActionMsg, setFriendActionMsg] = useState("");
+  const [friendActionError, setFriendActionError] = useState("");
+  const [loadingFriends, setLoadingFriends] = useState(false);
+
+  // Incoming Real-time Game Invite Modal
+  const [incomingInvite, setIncomingInvite] = useState(null); // { inviterId, inviterUsername, roomId }
+
+  // Match History & Profile State
+  const [matchHistory, setMatchHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [selectedMatchDetails, setSelectedMatchDetails] = useState(null);
+  const [userStats, setUserStats] = useState({
+    gamesPlayed: 0,
+    wins: 0,
+    losses: 0,
+    draws: 0,
+    onlineGames: 0,
+    onlineWins: 0,
+    onlineLosses: 0,
+    onlineDraws: 0,
+    winRate: "0.0%",
+  });
 
   const clientRef = useRef(null);
-  const aiTimeoutRef = useRef(null);
-  const playerIdRef = useRef(getStoredPlayerId());
   const currentRoomIdRef = useRef("");
 
-  const activeWsUrl = getResolvedWsUrl();
-
-  const clearAiTimeout = () => {
-    if (aiTimeoutRef.current) {
-      clearTimeout(aiTimeoutRef.current);
-      aiTimeoutRef.current = null;
+  // Initialize Authentication
+  useEffect(() => {
+    async function initAuth() {
+      try {
+        const user = await authService.getCurrentUser();
+        if (user) {
+          setCurrentUser(user);
+          setScreen("main_menu");
+        } else {
+          setScreen("auth");
+        }
+      } catch (err) {
+        console.warn("Auth initialization note:", err.message);
+        setScreen("auth");
+      } finally {
+        setAuthChecking(false);
+      }
     }
-  };
+    initAuth();
+  }, []);
 
+  // Sync Stats on user or screen change
+  const refreshStats = useCallback(async () => {
+    if (!currentUser) return;
+    try {
+      const stats = await historyService.getUserStats(currentUser.id);
+      setUserStats(stats);
+    } catch {}
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (currentUser && (screen === "profile" || screen === "main_menu")) {
+      refreshStats();
+    }
+  }, [currentUser, screen, refreshStats]);
+
+  // Handle Multiplayer Messages
   const handleMultiplayerMessage = useCallback((data) => {
     if (!data) return;
 
@@ -344,16 +384,28 @@ function App() {
       return;
     }
 
+    if (data.type === "friend_invite_received") {
+      setIncomingInvite({
+        inviterId: data.inviterId,
+        inviterUsername: data.inviterUsername,
+        roomId: data.roomId,
+      });
+      return;
+    }
+
     if (data.type === "room_created") {
       currentRoomIdRef.current = data.roomId;
       setRoomId(data.roomId);
       setOnlinePlayerNum(data.playerNum || 1);
       setOnlinePlayerCount(data.playerCount || 1);
+      if (data.player1Username) setOnlinePlayer1Name(data.player1Username);
       const card = data.ownCard || data.myCard || [];
-      setMyOnlineCard(card);
+      setMyOnlineCard([...card]);
       setOpponentOnlineCard(null);
       setOnlineError("");
       setOnlineLobbyView("waiting");
+      setCalledNumbers([]);
+      setLastCalledNumber(null);
       return;
     }
 
@@ -361,8 +413,10 @@ function App() {
       currentRoomIdRef.current = data.roomId;
       setRoomId(data.roomId);
       setOnlinePlayerNum(data.playerNum || 2);
+      if (data.player1Username) setOnlinePlayer1Name(data.player1Username);
+      if (data.player2Username) setOnlinePlayer2Name(data.player2Username);
       const card = data.ownCard || data.myCard || [];
-      setMyOnlineCard(card);
+      setMyOnlineCard([...card]);
       setOpponentOnlineCard(null);
       setOnlineError("");
       return;
@@ -385,6 +439,9 @@ function App() {
         setRoomId(data.roomId);
       }
       if (data.playerNum) setOnlinePlayerNum(data.playerNum);
+      if (data.player1Username) setOnlinePlayer1Name(data.player1Username);
+      if (data.player2Username) setOnlinePlayer2Name(data.player2Username);
+
       const card = data.ownCard || data.myCard;
       if (card && card.length === 25) setMyOnlineCard([...card]);
 
@@ -411,6 +468,7 @@ function App() {
         }
         const oppCard = data.opponentCard || (myNum === 1 ? data.player2Card : data.player1Card);
         if (oppCard) setOpponentOnlineCard([...oppCard]);
+        refreshStats();
       } else {
         setOpponentOnlineCard(null);
       }
@@ -441,7 +499,7 @@ function App() {
       setOnlineError(data.message || "Opponent declined new game.");
       return;
     }
-  }, [onlinePlayerNum]);
+  }, [onlinePlayerNum, refreshStats]);
 
   const getClient = useCallback(() => {
     if (!clientRef.current) {
@@ -461,63 +519,146 @@ function App() {
       clientRef.current = null;
     }
     setWsStatus("disconnected");
+    setRoomId("");
+    currentRoomIdRef.current = "";
+    setOnlineLobbyView("menu");
   }, []);
 
-  const connectMultiplayer = useCallback((onReady) => {
+  const connectMultiplayer = useCallback(() => {
     const client = getClient();
-    client.connect(onReady);
+    setOnlineError("");
+    client.connect();
   }, [getClient]);
 
-  // Connect automatically when opening online mode
-  useEffect(() => {
-    if (screen === "online_lobby" && wsStatus === "disconnected") {
-      connectMultiplayer();
+  // Auth Action Handlers
+  const handleSignUpSubmit = async (e) => {
+    e?.preventDefault();
+    setAuthError("");
+    setAuthSuccess("");
+
+    if (!authUsername.trim()) {
+      setAuthError("Username is required.");
+      return;
     }
-  }, [screen, wsStatus, connectMultiplayer]);
+    if (!authEmail.trim()) {
+      setAuthError("Email is required.");
+      return;
+    }
+    if (!authPassword) {
+      setAuthError("Password is required.");
+      return;
+    }
+    if (authPassword.length < 6) {
+      setAuthError("Password must be at least 6 characters.");
+      return;
+    }
+    if (authPassword !== authConfirmPassword) {
+      setAuthError("Passwords do not match.");
+      return;
+    }
 
-  const calledSet = useMemo(() => new Set(calledNumbers), [calledNumbers]);
-
-  const p1Lines = useMemo(() => countCompletedLines(player1Card, calledSet), [player1Card, calledSet]);
-  const p2Lines = useMemo(() => countCompletedLines(player2Card, calledSet), [player2Card, calledSet]);
-
-  const calculatedMyOnlineLines = useMemo(() => countCompletedLines(myOnlineCard, calledSet), [myOnlineCard, calledSet]);
-  const calculatedOpponentOnlineLines = useMemo(() => {
-    return opponentOnlineCard ? countCompletedLines(opponentOnlineCard, calledSet) : 0;
-  }, [opponentOnlineCard, calledSet]);
-
-  const p1CompletedCells = useMemo(() => getCompletedCellSet(player1Card, calledSet), [player1Card, calledSet]);
-  const p2CompletedCells = useMemo(() => getCompletedCellSet(player2Card, calledSet), [player2Card, calledSet]);
-  const myOnlineCompletedCells = useMemo(() => getCompletedCellSet(myOnlineCard, calledSet), [myOnlineCard, calledSet]);
-  const opponentOnlineCompletedCells = useMemo(() => {
-    return opponentOnlineCard ? getCompletedCellSet(opponentOnlineCard, calledSet) : new Set();
-  }, [opponentOnlineCard, calledSet]);
-
-  const executeLocalCall = (number) => {
-    const newCalled = [...calledNumbers, number];
-    const newCalledSet = new Set(newCalled);
-    const newP1Lines = countCompletedLines(player1Card, newCalledSet);
-    const newP2Lines = countCompletedLines(player2Card, newCalledSet);
-    const result = resolveGameResult(newP1Lines, newP2Lines, newCalled.length);
-
-    setCalledNumbers(newCalled);
-    setLastCalledNumber(number);
-
-    if (result !== null) {
-      setWinner(result);
-      setGameOver(true);
-      setAiThinking(false);
-    } else {
-      setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
+    setAuthLoading(true);
+    try {
+      const user = await authService.signUp({
+        email: authEmail,
+        password: authPassword,
+        username: authUsername,
+      });
+      setCurrentUser(user);
+      setScreen("main_menu");
+    } catch (err) {
+      setAuthError(err.message || "Failed to create account.");
+    } finally {
+      setAuthLoading(false);
     }
   };
 
+  const handleSignInSubmit = async (e) => {
+    e?.preventDefault();
+    setAuthError("");
+    setAuthSuccess("");
+
+    if (!authEmail.trim()) {
+      setAuthError("Email is required.");
+      return;
+    }
+    if (!authPassword) {
+      setAuthError("Password is required.");
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      const user = await authService.signIn({
+        email: authEmail,
+        password: authPassword,
+      });
+      setCurrentUser(user);
+      setScreen("main_menu");
+    } catch (err) {
+      setAuthError(err.message || "Invalid email or password.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!authEmail.trim()) {
+      setAuthError("Please enter your email to reset your password.");
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      await authService.resetPassword(authEmail);
+      setAuthSuccess("Password reset instructions sent to your email.");
+      setAuthError("");
+    } catch (err) {
+      setAuthError(err.message || "Failed to send reset email.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handlePlayAsGuest = () => {
+    const guestUser = authService.createGuestUser();
+    setCurrentUser(guestUser);
+    setScreen("main_menu");
+  };
+
+  const handleSignOut = async () => {
+    disconnectMultiplayer();
+    await authService.signOut(currentUser);
+    setCurrentUser(null);
+    setAuthEmail("");
+    setAuthPassword("");
+    setAuthConfirmPassword("");
+    setAuthUsername("");
+    setAuthError("");
+    setScreen("auth");
+  };
+
+  // Local Match Calculations
+  const calledSet = useMemo(() => new Set(calledNumbers), [calledNumbers]);
+  const p1CompletedCells = useMemo(() => getCompletedCellSet(player1Card, calledSet), [player1Card, calledSet]);
+  const p2CompletedCells = useMemo(() => getCompletedCellSet(player2Card, calledSet), [player2Card, calledSet]);
+  const p1Lines = useMemo(() => countCompletedLines(player1Card, calledSet), [player1Card, calledSet]);
+  const p2Lines = useMemo(() => countCompletedLines(player2Card, calledSet), [player2Card, calledSet]);
+
+  const myOnlineCompletedCells = useMemo(() => getCompletedCellSet(myOnlineCard, calledSet), [myOnlineCard, calledSet]);
+  const calculatedMyOnlineLines = useMemo(() => countCompletedLines(myOnlineCard, calledSet), [myOnlineCard, calledSet]);
+  const opponentOnlineCompletedCells = useMemo(() => opponentOnlineCard ? getCompletedCellSet(opponentOnlineCard, calledSet) : new Set(), [opponentOnlineCard, calledSet]);
+  const calculatedOpponentOnlineLines = useMemo(() => opponentOnlineCard ? countCompletedLines(opponentOnlineCard, calledSet) : 0, [opponentOnlineCard, calledSet]);
+
+  const effectiveMyLines = myOnlineLines || calculatedMyOnlineLines;
+  const effectiveOppLines = opponentOnlineLines || calculatedOpponentOnlineLines;
+
+  // Local Game Flow & AI Turn
   const handleNumberClick = (playerNum, number) => {
     if (gameMode === "online") {
       if (gameOver) return;
       if (currentPlayer !== onlinePlayerNum) return;
       if (calledSet.has(number)) return;
 
-      // Optimistic UI update for instant feedback
       setCalledNumbers((prev) => (prev.includes(number) ? prev : [...prev, number]));
       setLastCalledNumber(number);
 
@@ -526,78 +667,83 @@ function App() {
     }
 
     if (gameOver || aiThinking) return;
-    if (currentPlayer !== playerNum) return;
+    if (gameMode === "ai" && currentPlayer !== 1) return;
+    if (gameMode === "two_player" && currentPlayer !== playerNum) return;
     if (calledSet.has(number)) return;
 
-    executeLocalCall(number);
+    const newCalled = [...calledNumbers, number];
+    const newCalledSet = new Set(newCalled);
+    const newP1Lines = countCompletedLines(player1Card, newCalledSet);
+    const newP2Lines = countCompletedLines(player2Card, newCalledSet);
+
+    setCalledNumbers(newCalled);
+    setLastCalledNumber(number);
+
+    const result = resolveGameResult(newP1Lines, newP2Lines, newCalled.length);
+    if (result !== null) {
+      setGameOver(true);
+      setWinner(result);
+      if (currentUser) {
+        historyService.recordLocalGameResult(
+          currentUser.id,
+          gameMode,
+          result === "player1" ? "win" : result === "player2" ? "loss" : "draw"
+        );
+        refreshStats();
+      }
+    } else {
+      setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
+    }
   };
 
   useEffect(() => {
-    if (screen === "game" && gameMode === "ai" && currentPlayer === 2 && !gameOver) {
-      setAiThinking(true);
-      clearAiTimeout();
-      const delay = difficulty === "easy" ? 750 : difficulty === "medium" ? 1050 : 1400;
-      aiTimeoutRef.current = setTimeout(() => {
-        const available = Array.from({ length: 25 }, (_, i) => i + 1).filter((num) => !calledSet.has(num));
-        if (available.length > 0) {
-          const aiChoice = chooseAIMove(difficulty, available, player2Card, player1Card, calledSet);
-          setAiThinking(false);
-          executeLocalCall(aiChoice);
-        }
-      }, delay);
-    } else {
+    if (gameMode !== "ai" || currentPlayer !== 2 || gameOver || aiThinking) return;
+
+    setAiThinking(true);
+    const timer = setTimeout(() => {
+      const allNumbers = Array.from({ length: 25 }, (_, i) => i + 1);
+      const available = allNumbers.filter((n) => !calledSet.has(n));
+      if (available.length === 0) {
+        setAiThinking(false);
+        return;
+      }
+
+      let chosen;
+      if (difficulty === "easy") chosen = chooseEasyMove(available);
+      else if (difficulty === "hard") chosen = chooseHardMove(available, player2Card, player1Card, calledSet);
+      else chosen = chooseMediumMove(available, player2Card, player1Card, calledSet);
+
+      const newCalled = [...calledNumbers, chosen];
+      const newCalledSet = new Set(newCalled);
+      const newP1Lines = countCompletedLines(player1Card, newCalledSet);
+      const newP2Lines = countCompletedLines(player2Card, newCalledSet);
+
+      setCalledNumbers(newCalled);
+      setLastCalledNumber(chosen);
       setAiThinking(false);
-    }
-    return () => clearAiTimeout();
-  }, [currentPlayer, gameMode, gameOver, calledSet, screen, difficulty, player1Card, player2Card]);
 
-  const resetOnlineState = () => {
-    setCalledNumbers([]);
-    setLastCalledNumber(null);
-    setCurrentPlayer(1);
-    setGameOver(false);
-    setWinner(null);
-    setMyOnlineLines(0);
-    setOpponentOnlineLines(0);
-    setOpponentOnlineCard(null);
-    setMyOnlineCard([]);
-    setOnlineError("");
-    setOnlineResetRequested(false);
-    setOnlineOpponentResetRequested(false);
-  };
+      const result = resolveGameResult(newP1Lines, newP2Lines, newCalled.length);
+      if (result !== null) {
+        setGameOver(true);
+        setWinner(result);
+        if (currentUser) {
+          historyService.recordLocalGameResult(
+            currentUser.id,
+            "ai",
+            result === "player1" ? "win" : result === "player2" ? "loss" : "draw"
+          );
+          refreshStats();
+        }
+      } else {
+        setCurrentPlayer(1);
+      }
+    }, 700);
 
-  const selectGameMode = (mode) => {
-    clearAiTimeout();
-    setGameMode(mode);
-    setOnlineError("");
+    return () => clearTimeout(timer);
+  }, [gameMode, currentPlayer, gameOver, aiThinking, calledSet, difficulty, player1Card, player2Card, calledNumbers, currentUser, refreshStats]);
 
-    if (mode === "two_player") {
-      disconnectMultiplayer();
-      startNewLocalGame("two_player", difficulty);
-    } else if (mode === "ai") {
-      disconnectMultiplayer();
-      setScreen("diff_select");
-    } else if (mode === "online") {
-      setScreen("online_lobby");
-      setOnlineLobbyView("menu");
-      setRoomId("");
-      setJoinCodeInput("");
-      resetOnlineState();
-      connectMultiplayer();
-    }
-  };
-
-  const selectDifficultyAndStart = (selectedDiff) => {
-    clearAiTimeout();
-    setDifficulty(selectedDiff);
-    startNewLocalGame("ai", selectedDiff);
-  };
-
-  const startNewLocalGame = (mode, diff) => {
-    clearAiTimeout();
-    setGameMode(mode);
-    setDifficulty(diff);
-    setScreen("game");
+  // Reset and Local Game Initialization
+  const resetLocalGameState = () => {
     setPlayer1Card(createShuffledCard());
     setPlayer2Card(createShuffledCard());
     setCalledNumbers([]);
@@ -608,115 +754,193 @@ function App() {
     setAiThinking(false);
   };
 
+  const startNewLocalGame = (mode) => {
+    setGameMode(mode);
+    resetLocalGameState();
+    setScreen("game");
+  };
+
   const handleCreateOnlineGame = () => {
+    const client = getClient();
     setOnlineError("");
-    connectMultiplayer(() => {
-      getClient().createRoom(playerIdRef.current);
-    });
+    client.createRoom(currentUser);
   };
 
   const handleJoinOnlineGame = () => {
     const cleanCode = joinCodeInput.trim().toUpperCase();
     if (!cleanCode) {
-      setOnlineError("Please enter a valid 6-character game code.");
+      setOnlineError("Please enter a game code.");
       return;
     }
+    const client = getClient();
     setOnlineError("");
-    connectMultiplayer(() => {
-      getClient().joinRoom(cleanCode, playerIdRef.current);
-    });
+    client.joinRoom(cleanCode, currentUser);
   };
 
   const handleCopyRoomCode = () => {
     if (!roomId) return;
-    const fallbackCopy = () => {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = roomId;
-        ta.style.cssText = "position:fixed;opacity:0;top:0;left:0";
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-        setCopiedCode(true);
-        setTimeout(() => setCopiedCode(false), 2000);
-      } catch {}
-    };
-
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(roomId)
-        .then(() => {
-          setCopiedCode(true);
-          setTimeout(() => setCopiedCode(false), 2000);
-        })
-        .catch(fallbackCopy);
-    } else {
-      fallbackCopy();
-    }
-  };
-
-  const handleRequestOnlineReset = () => {
-    getClient().requestRestart();
-    setOnlineResetRequested(true);
+    navigator.clipboard.writeText(roomId).then(() => {
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    });
   };
 
   const handleLeaveOnlineGame = () => {
     disconnectMultiplayer();
-    currentRoomIdRef.current = "";
-    setScreen("mode_select");
-    setGameMode(null);
-    setRoomId("");
-    resetOnlineState();
+    setScreen("main_menu");
   };
 
-  const handleReset = () => {
-    if (gameMode === "online") {
-      handleRequestOnlineReset();
-    } else if (gameMode) {
-      startNewLocalGame(gameMode, difficulty);
+  const handleRequestOnlineReset = () => {
+    setOnlineResetRequested(true);
+    getClient().requestRestart();
+  };
+
+  // Friend System Actions
+  const loadFriendsData = async () => {
+    if (!currentUser || currentUser.isGuest) return;
+    setLoadingFriends(true);
+    setFriendActionMsg("");
+    setFriendActionError("");
+    try {
+      const [friends, requests] = await Promise.all([
+        friendService.getFriends(currentUser.id),
+        friendService.getFriendRequests(currentUser.id),
+      ]);
+      setFriendsList(friends);
+      setFriendRequests(requests);
+    } catch (err) {
+      setFriendActionError("Could not load friends: " + err.message);
+    } finally {
+      setLoadingFriends(false);
     }
   };
 
-  const handleChangeDifficulty = () => {
-    clearAiTimeout();
-    setScreen("diff_select");
-    setCalledNumbers([]);
-    setLastCalledNumber(null);
-    setCurrentPlayer(1);
-    setGameOver(false);
-    setWinner(null);
-    setAiThinking(false);
+  const handleSearchUsers = async () => {
+    if (!friendSearchQuery.trim()) return;
+    setLoadingFriends(true);
+    setFriendActionError("");
+    setFriendActionMsg("");
+    try {
+      const results = await friendService.searchUsers(friendSearchQuery, currentUser?.id);
+      setFriendSearchResults(results);
+      if (results.length === 0) setFriendActionMsg("USER NOT FOUND");
+    } catch (err) {
+      setFriendActionError(err.message || "Failed to search users.");
+    } finally {
+      setLoadingFriends(false);
+    }
   };
 
-  const handleChangeMode = () => {
-    clearAiTimeout();
-    disconnectMultiplayer();
-    currentRoomIdRef.current = "";
-    setScreen("mode_select");
-    setGameMode(null);
-    setCalledNumbers([]);
-    setLastCalledNumber(null);
-    setCurrentPlayer(1);
-    setGameOver(false);
-    setWinner(null);
-    setAiThinking(false);
-    resetOnlineState();
+  const handleSendFriendRequest = async (receiverId) => {
+    setFriendActionError("");
+    setFriendActionMsg("");
+    try {
+      await friendService.sendFriendRequest(currentUser.id, receiverId);
+      setFriendActionMsg("Friend request sent successfully.");
+      loadFriendsData();
+    } catch (err) {
+      setFriendActionError(err.message || "Could not send friend request.");
+    }
+  };
+
+  const handleRespondFriendRequest = async (requestId, accept, senderId) => {
+    try {
+      await friendService.respondToFriendRequest(requestId, accept, senderId, currentUser.id);
+      loadFriendsData();
+    } catch (err) {
+      setFriendActionError("Action failed: " + err.message);
+    }
+  };
+
+  const handleRemoveFriend = async (friendId) => {
+    try {
+      await friendService.removeFriend(currentUser.id, friendId);
+      loadFriendsData();
+    } catch (err) {
+      setFriendActionError("Failed to remove friend: " + err.message);
+    }
+  };
+
+  const handleInviteFriendToGame = (friend) => {
+    setGameMode("online");
+    const client = getClient();
+    client.createRoom(currentUser);
+    // After creating room, send invitation
+    setTimeout(() => {
+      if (client.roomId && client.ws && client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(JSON.stringify({
+          type: "friend_invite",
+          targetUserId: friend.id,
+          inviterId: currentUser.id,
+          inviterUsername: currentUser.username,
+          roomId: client.roomId,
+        }));
+      }
+    }, 400);
+    setScreen("online_lobby");
+    setOnlineLobbyView("waiting");
+  };
+
+  const handleAcceptInvite = () => {
+    if (!incomingInvite) return;
+    const roomCode = incomingInvite.roomId;
+    setIncomingInvite(null);
+    setGameMode("online");
+    const client = getClient();
+    client.joinRoom(roomCode, currentUser);
+  };
+
+  const handleDeclineInvite = () => {
+    setIncomingInvite(null);
+  };
+
+  // Match History Loader
+  const loadMatchHistoryData = async () => {
+    if (!currentUser) return;
+    setLoadingHistory(true);
+    try {
+      const history = await historyService.getMatchHistory(currentUser.id);
+      setMatchHistory(history);
+    } catch (err) {
+      console.warn("Could not load history:", err.message);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // UI Text Helpers
+  const getTurnIndicatorText = () => {
+    if (gameOver) return "";
+    if (gameMode === "online") {
+      if (!opponentConnected) return "OPPONENT DISCONNECTED";
+      const oppName = onlinePlayerNum === 1 ? onlinePlayer2Name : onlinePlayer1Name;
+      return currentPlayer === onlinePlayerNum ? "YOUR TURN" : `${oppName.toUpperCase()}'S TURN`;
+    }
+    if (gameMode === "ai") return currentPlayer === 1 ? "YOUR TURN" : "AI IS THINKING...";
+    return currentPlayer === 1 ? "PLAYER 1'S TURN" : "PLAYER 2'S TURN";
+  };
+
+  const getBingoMessage = () => {
+    if (gameMode === "online") {
+      if (winner === "player1") return onlinePlayerNum === 1 ? "BINGO! YOU WIN!" : `BINGO! ${onlinePlayer1Name.toUpperCase()} WINS!`;
+      if (winner === "player2") return onlinePlayerNum === 2 ? "BINGO! YOU WIN!" : `BINGO! ${onlinePlayer2Name.toUpperCase()} WINS!`;
+      if (winner === "draw") return "DRAW!";
+      return null;
+    }
+    if (winner === "player1") return gameMode === "ai" ? "BINGO! YOU WIN!" : "BINGO! PLAYER 1 WINS!";
+    if (winner === "player2") return gameMode === "ai" ? "BINGO! AI WINS!" : "BINGO! PLAYER 2 WINS!";
+    if (winner === "draw") return "DRAW!";
+    return null;
   };
 
   const getGameStatusText = () => {
-    if (gameMode === "online") {
-      if (!opponentConnected && !gameOver) return "Opponent Disconnected";
-      if (winner === "player1") return onlinePlayerNum === 1 ? "You Win!" : "Player 1 Wins";
-      if (winner === "player2") return onlinePlayerNum === 2 ? "You Win!" : "Player 2 Wins";
+    if (gameOver) {
       if (winner === "draw") return "Draw";
-      return currentPlayer === onlinePlayerNum ? "Your Turn" : "Opponent's Turn";
+      if (gameMode === "online") return winner === `player${onlinePlayerNum}` ? "You Won!" : "You Lost";
+      if (gameMode === "ai") return winner === "player1" ? "You Won!" : "AI Won";
+      return winner === "player1" ? "Player 1 Won" : "Player 2 Won";
     }
-    if (winner === "player1") return gameMode === "ai" ? "You Win!" : "Player 1 Wins";
-    if (winner === "player2") return gameMode === "ai" ? "AI Wins" : "Player 2 Wins";
-    if (winner === "draw") return "Draw";
-    if (gameMode === "ai") return currentPlayer === 1 ? "Your Turn" : "AI's Turn";
-    return currentPlayer === 1 ? "Player 1's Turn" : "Player 2's Turn";
+    return "In Progress";
   };
 
   const getCardStatus = (playerNum) => {
@@ -731,82 +955,535 @@ function App() {
     return { type: "wait", text: "Waiting" };
   };
 
-  const getTurnIndicatorText = () => {
-    if (gameOver) return "";
-    if (gameMode === "online") {
-      if (!opponentConnected) return "OPPONENT DISCONNECTED";
-      return currentPlayer === onlinePlayerNum ? "YOUR TURN" : "OPPONENT'S TURN";
-    }
-    if (gameMode === "ai") return currentPlayer === 1 ? "YOUR TURN" : "AI IS THINKING...";
-    return currentPlayer === 1 ? "PLAYER 1'S TURN" : "PLAYER 2'S TURN";
-  };
-
-  const getBingoMessage = () => {
-    if (gameMode === "online") {
-      if (winner === "player1") return onlinePlayerNum === 1 ? "BINGO! YOU WIN!" : "BINGO! PLAYER 1 WINS!";
-      if (winner === "player2") return onlinePlayerNum === 2 ? "BINGO! YOU WIN!" : "BINGO! PLAYER 2 WINS!";
-      if (winner === "draw") return "DRAW!";
-      return null;
-    }
-    if (winner === "player1") return gameMode === "ai" ? "BINGO! YOU WIN!" : "BINGO! PLAYER 1 WINS!";
-    if (winner === "player2") return gameMode === "ai" ? "BINGO! AI WINS!" : "BINGO! PLAYER 2 WINS!";
-    if (winner === "draw") return "DRAW!";
-    return null;
-  };
-
   const wsStatusLabel = wsStatus === "connecting" ? "CONNECTING" : wsStatus === "connected" ? "CONNECTED" : "DISCONNECTED";
   const wsStatusClass = wsStatus === "connecting" ? "conn-connecting" : wsStatus === "connected" ? "conn-online" : "conn-offline";
 
-  const effectiveMyLines = myOnlineLines || calculatedMyOnlineLines;
-  const effectiveOppLines = opponentOnlineLines || calculatedOpponentOnlineLines;
-
-  if (screen === "mode_select") {
+  // --- SCREEN 1: AUTHENTICATION ---
+  if (screen === "auth" && !authChecking) {
     return (
-      <div className="bingo-app mode-selection-page">
+      <div className="bingo-app auth-page">
         <h1 className="title">BINGO</h1>
-        <p className="subtitle">Choose your game mode</p>
-        <div className="mode-selection-container">
-          <button className="mode-card mode-ai" onClick={() => selectGameMode("ai")}>
-            <div className="mode-title">PLAY AGAINST AI</div>
-            <div className="mode-desc">Challenge the computer in a single-player match</div>
+        <p className="subtitle">Real-time Multiplayer & Match Tracking</p>
+
+        <div className="auth-card">
+          <div className="auth-tabs">
+            <button
+              className={`auth-tab-btn ${authMode === "signin" ? "active" : ""}`}
+              onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
+            >
+              SIGN IN
+            </button>
+            <button
+              className={`auth-tab-btn ${authMode === "signup" ? "active" : ""}`}
+              onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthSuccess(""); }}
+            >
+              SIGN UP
+            </button>
+          </div>
+
+          {authError && <div className="auth-alert error">{authError}</div>}
+          {authSuccess && <div className="auth-alert success">{authSuccess}</div>}
+
+          {authMode === "signin" && (
+            <form className="auth-form" onSubmit={handleSignInSubmit}>
+              <div className="form-group">
+                <label className="form-label">EMAIL</label>
+                <input
+                  type="email"
+                  className="form-input"
+                  placeholder="Enter your email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">PASSWORD</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  placeholder="Enter your password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <button type="submit" className="btn btn-auth-primary" disabled={authLoading}>
+                {authLoading ? "SIGNING IN..." : "SIGN IN"}
+              </button>
+              <button type="button" className="btn-link" onClick={handleForgotPassword}>
+                FORGOT PASSWORD
+              </button>
+            </form>
+          )}
+
+          {authMode === "signup" && (
+            <form className="auth-form" onSubmit={handleSignUpSubmit}>
+              <div className="form-group">
+                <label className="form-label">USERNAME</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Choose a unique username"
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">EMAIL</label>
+                <input
+                  type="email"
+                  className="form-input"
+                  placeholder="Enter your email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">PASSWORD</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  placeholder="Create a secure password (min 6 chars)"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">CONFIRM PASSWORD</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  placeholder="Re-enter your password"
+                  value={authConfirmPassword}
+                  onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <button type="submit" className="btn btn-auth-primary" disabled={authLoading}>
+                {authLoading ? "CREATING ACCOUNT..." : "SIGN UP"}
+              </button>
+            </form>
+          )}
+
+          <div className="auth-divider">
+            <span>OR</span>
+          </div>
+
+          <button className="btn btn-guest" onClick={handlePlayAsGuest}>
+            PLAY AS GUEST
           </button>
-          <button className="mode-card mode-two-player" onClick={() => selectGameMode("two_player")}>
-            <div className="mode-title">TWO PLAYER</div>
-            <div className="mode-desc">Play locally with a friend on the same screen</div>
+          <div className="guest-note">
+            Guest mode lets you play immediately. Online stats and friendships are preserved only for registered accounts.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- SCREEN 2: MAIN MENU ---
+  if (screen === "main_menu") {
+    return (
+      <div className="bingo-app main-menu-page">
+        <h1 className="title">BINGO</h1>
+        <p className="welcome-tag">
+          Welcome, <strong>{currentUser?.username || "Player"}</strong>
+          {currentUser?.isGuest && <span className="guest-badge">Guest Mode</span>}
+        </p>
+
+        <div className="main-menu-grid">
+          <button className="menu-btn primary-menu-btn" onClick={() => setScreen("diff_select")}>
+            <div className="menu-btn-title">PLAY AGAINST AI</div>
+            <div className="menu-btn-desc">Challenge the computer in Single Player mode</div>
           </button>
-          <button className="mode-card mode-online" onClick={() => selectGameMode("online")}>
-            <div className="mode-title">ONLINE MODE</div>
-            <div className="mode-desc">Play real-time multiplayer with a private card</div>
+
+          <button className="menu-btn primary-menu-btn" onClick={() => startNewLocalGame("two_player")}>
+            <div className="menu-btn-title">TWO PLAYER</div>
+            <div className="menu-btn-desc">Play locally with a friend on the same screen</div>
+          </button>
+
+          <button className="menu-btn primary-menu-btn" onClick={() => { setGameMode("online"); connectMultiplayer(); setScreen("online_lobby"); }}>
+            <div className="menu-btn-title">ONLINE MODE</div>
+            <div className="menu-btn-desc">Play real-time multiplayer with a private card</div>
+          </button>
+
+          <button className="menu-btn secondary-menu-btn" onClick={() => { setScreen("friends"); loadFriendsData(); }}>
+            <div className="menu-btn-title">FRIENDS</div>
+            <div className="menu-btn-desc">View friends, presence, and send game invites</div>
+          </button>
+
+          <button className="menu-btn secondary-menu-btn" onClick={() => { setScreen("history"); loadMatchHistoryData(); }}>
+            <div className="menu-btn-title">ONLINE HISTORY</div>
+            <div className="menu-btn-desc">View past completed multiplayer matches</div>
+          </button>
+
+          <button className="menu-btn secondary-menu-btn" onClick={() => { setScreen("profile"); refreshStats(); }}>
+            <div className="menu-btn-title">PROFILE</div>
+            <div className="menu-btn-desc">Check your win rate and gameplay stats</div>
+          </button>
+        </div>
+
+        <button className="btn btn-signout" onClick={handleSignOut}>
+          SIGN OUT
+        </button>
+      </div>
+    );
+  }
+
+  // --- SCREEN 3: PROFILE & STATISTICS ---
+  if (screen === "profile") {
+    return (
+      <div className="bingo-app profile-page">
+        <h1 className="title">BINGO</h1>
+        <p className="subtitle">USER PROFILE & STATISTICS</p>
+
+        <div className="profile-container">
+          <div className="profile-header-card">
+            <div className="profile-avatar-circle">
+              {currentUser?.username?.charAt(0)?.toUpperCase() || "U"}
+            </div>
+            <div className="profile-header-info">
+              <h2 className="profile-username">{currentUser?.username}</h2>
+              <span className="profile-account-type">
+                {currentUser?.isGuest ? "GUEST ACCOUNT" : "REGISTERED MEMBER"}
+              </span>
+              {currentUser?.email && <span className="profile-email">{currentUser.email}</span>}
+            </div>
+          </div>
+
+          <div className="stats-section-title">ALL-TIME STATS</div>
+          <div className="stats-grid-card">
+            <div className="stat-box">
+              <span className="stat-label">GAMES PLAYED</span>
+              <span className="stat-value">{userStats.gamesPlayed}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">WINS</span>
+              <span className="stat-value win-color">{userStats.wins}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">LOSSES</span>
+              <span className="stat-value loss-color">{userStats.losses}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">DRAWS</span>
+              <span className="stat-value draw-color">{userStats.draws}</span>
+            </div>
+          </div>
+
+          <div className="stats-section-title">ONLINE MULTIPLAYER STATS</div>
+          <div className="stats-grid-card">
+            <div className="stat-box">
+              <span className="stat-label">ONLINE GAMES</span>
+              <span className="stat-value">{userStats.onlineGames}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">ONLINE WINS</span>
+              <span className="stat-value win-color">{userStats.onlineWins}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">ONLINE LOSSES</span>
+              <span className="stat-value loss-color">{userStats.onlineLosses}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">ONLINE DRAWS</span>
+              <span className="stat-value draw-color">{userStats.onlineDraws}</span>
+            </div>
+            <div className="stat-box highlight-box">
+              <span className="stat-label">WIN RATE</span>
+              <span className="stat-value highlight-value">{userStats.winRate}</span>
+            </div>
+          </div>
+
+          <button className="btn btn-back" onClick={() => setScreen("main_menu")}>
+            BACK TO MENU
           </button>
         </div>
       </div>
     );
   }
 
+  // --- SCREEN 4: FRIENDS SYSTEM ---
+  if (screen === "friends") {
+    return (
+      <div className="bingo-app friends-page">
+        <h1 className="title">BINGO</h1>
+        <p className="subtitle">FRIEND SYSTEM</p>
+
+        <div className="friends-container">
+          <div className="friends-nav-tabs">
+            <button
+              className={`friends-tab-btn ${friendsTab === "my_friends" ? "active" : ""}`}
+              onClick={() => { setFriendsTab("my_friends"); loadFriendsData(); }}
+            >
+              MY FRIENDS ({friendsList.length})
+            </button>
+            <button
+              className={`friends-tab-btn ${friendsTab === "requests" ? "active" : ""}`}
+              onClick={() => { setFriendsTab("requests"); loadFriendsData(); }}
+            >
+              REQUESTS ({friendRequests.length})
+            </button>
+            <button
+              className={`friends-tab-btn ${friendsTab === "add" ? "active" : ""}`}
+              onClick={() => { setFriendsTab("add"); setFriendSearchResults([]); }}
+            >
+              ADD FRIEND
+            </button>
+          </div>
+
+          {friendActionMsg && <div className="friend-banner success">{friendActionMsg}</div>}
+          {friendActionError && <div className="friend-banner error">{friendActionError}</div>}
+
+          {currentUser?.isGuest && (
+            <div className="guest-warning-banner">
+              You are currently in Guest mode. Sign in to send persistent friend requests and invite friends.
+            </div>
+          )}
+
+          {friendsTab === "my_friends" && (
+            <div className="friends-tab-content">
+              {loadingFriends ? (
+                <div className="loading-spinner">Loading friends...</div>
+              ) : friendsList.length === 0 ? (
+                <div className="empty-friends-state">
+                  No friends added yet. Use "ADD FRIEND" to search and connect with players!
+                </div>
+              ) : (
+                <div className="friends-list-grid">
+                  {friendsList.map((friend) => (
+                    <div key={friend.id} className="friend-item-card">
+                      <div className="friend-info">
+                        <span className="friend-name">{friend.username}</span>
+                        <span className={`presence-pill ${friend.onlineStatus}`}>
+                          {friend.onlineStatus.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="friend-actions">
+                        <button
+                          className="btn btn-invite-friend"
+                          onClick={() => handleInviteFriendToGame(friend)}
+                          disabled={currentUser?.isGuest}
+                        >
+                          INVITE TO GAME
+                        </button>
+                        <button
+                          className="btn btn-remove-friend"
+                          onClick={() => handleRemoveFriend(friend.id)}
+                        >
+                          REMOVE
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {friendsTab === "requests" && (
+            <div className="friends-tab-content">
+              {loadingFriends ? (
+                <div className="loading-spinner">Loading requests...</div>
+              ) : friendRequests.length === 0 ? (
+                <div className="empty-friends-state">No pending friend requests.</div>
+              ) : (
+                <div className="friend-requests-list">
+                  {friendRequests.map((req) => (
+                    <div key={req.id} className="friend-request-card">
+                      <div className="request-user-info">
+                        <span className="request-username">{req.username}</span>
+                        <span className="request-label">Wants to be your friend</span>
+                      </div>
+                      <div className="request-btn-group">
+                        <button
+                          className="btn btn-accept"
+                          onClick={() => handleRespondFriendRequest(req.id, true, req.senderId)}
+                        >
+                          ACCEPT
+                        </button>
+                        <button
+                          className="btn btn-decline"
+                          onClick={() => handleRespondFriendRequest(req.id, false, req.senderId)}
+                        >
+                          DECLINE
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {friendsTab === "add" && (
+            <div className="friends-tab-content">
+              <div className="add-friend-search-box">
+                <input
+                  type="text"
+                  className="friend-search-input"
+                  placeholder="Search user by username"
+                  value={friendSearchQuery}
+                  onChange={(e) => setFriendSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearchUsers()}
+                />
+                <button className="btn btn-search" onClick={handleSearchUsers} disabled={loadingFriends}>
+                  {loadingFriends ? "SEARCHING..." : "SEARCH"}
+                </button>
+              </div>
+
+              <div className="search-results-list">
+                {friendSearchResults.map((user) => (
+                  <div key={user.id} className="search-result-card">
+                    <div className="result-user-info">
+                      <span className="result-username">{user.username}</span>
+                      <span className="result-status">{user.online_status?.toUpperCase() || "OFFLINE"}</span>
+                    </div>
+                    <button
+                      className="btn btn-send-request"
+                      onClick={() => handleSendFriendRequest(user.id)}
+                      disabled={currentUser?.isGuest}
+                    >
+                      SEND REQUEST
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button className="btn btn-back" onClick={() => setScreen("main_menu")}>
+            BACK TO MENU
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- SCREEN 5: ONLINE MATCH HISTORY ---
+  if (screen === "history") {
+    return (
+      <div className="bingo-app history-page">
+        <h1 className="title">BINGO</h1>
+        <p className="subtitle">ONLINE MATCH HISTORY</p>
+
+        <div className="history-container">
+          {loadingHistory ? (
+            <div className="loading-spinner">Loading match history...</div>
+          ) : matchHistory.length === 0 ? (
+            <div className="empty-history-card">
+              No online match records found yet. Play in Online Mode to automatically record match stats!
+            </div>
+          ) : (
+            <div className="history-matches-list">
+              {matchHistory.map((m) => (
+                <div
+                  key={m.id}
+                  className={`history-match-item outcome-${m.result.toLowerCase()}`}
+                  onClick={() => setSelectedMatchDetails(m)}
+                >
+                  <div className="history-col date-col">{m.date}</div>
+                  <div className="history-col opponent-col">
+                    <span className="col-sublabel">OPPONENT</span>
+                    <span className="col-value">{m.opponentUsername}</span>
+                  </div>
+                  <div className="history-col result-col">
+                    <span className={`result-badge ${m.result.toLowerCase()}`}>{m.result}</span>
+                  </div>
+                  <div className="history-col score-col">
+                    <span className="col-sublabel">LINES</span>
+                    <span className="col-value">{m.myLines} - {m.opponentLines}</span>
+                  </div>
+                  <div className="history-col action-col">
+                    <button className="btn btn-details-sm">DETAILS</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button className="btn btn-back" onClick={() => setScreen("main_menu")}>
+            BACK TO MENU
+          </button>
+        </div>
+
+        {selectedMatchDetails && (
+          <div className="modal-backdrop" onClick={() => setSelectedMatchDetails(null)}>
+            <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+              <h3 className="modal-title">MATCH DETAILS</h3>
+              <div className="modal-meta-grid">
+                <div className="meta-row">
+                  <span className="meta-label">OPPONENT:</span>
+                  <span className="meta-val">{selectedMatchDetails.opponentUsername}</span>
+                </div>
+                <div className="meta-row">
+                  <span className="meta-label">DATE:</span>
+                  <span className="meta-val">{selectedMatchDetails.date}</span>
+                </div>
+                <div className="meta-row">
+                  <span className="meta-label">RESULT:</span>
+                  <span className={`meta-val result-badge ${selectedMatchDetails.result.toLowerCase()}`}>
+                    {selectedMatchDetails.result}
+                  </span>
+                </div>
+                <div className="meta-row">
+                  <span className="meta-label">YOUR FINAL LINES:</span>
+                  <span className="meta-val">{selectedMatchDetails.myLines} / 5</span>
+                </div>
+                <div className="meta-row">
+                  <span className="meta-label">OPPONENT LINES:</span>
+                  <span className="meta-val">{selectedMatchDetails.opponentLines} / 5</span>
+                </div>
+                <div className="meta-row">
+                  <span className="meta-label">TOTAL NUMBERS CALLED:</span>
+                  <span className="meta-val">{selectedMatchDetails.totalCalled}</span>
+                </div>
+                <div className="meta-row">
+                  <span className="meta-label">LAST CALLED NUMBER:</span>
+                  <span className="meta-val">{selectedMatchDetails.lastCalledNumber || "-"}</span>
+                </div>
+              </div>
+              <button className="btn btn-modal-close" onClick={() => setSelectedMatchDetails(null)}>
+                CLOSE
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // --- SCREEN 6: DIFFICULTY SELECT ---
   if (screen === "diff_select") {
     return (
       <div className="bingo-app mode-selection-page">
         <h1 className="title">BINGO</h1>
         <p className="subtitle">CHOOSE DIFFICULTY</p>
         <div className="diff-selection-container">
-          <button className="diff-card diff-easy" onClick={() => selectDifficultyAndStart("easy")}>
+          <button className="diff-card diff-easy" onClick={() => { setDifficulty("easy"); startNewLocalGame("ai"); }}>
             <div className="diff-badge">EASY</div>
             <div className="diff-desc">AI chooses randomly and makes simple decisions.</div>
           </button>
-          <button className="diff-card diff-medium" onClick={() => selectDifficultyAndStart("medium")}>
+          <button className="diff-card diff-medium" onClick={() => { setDifficulty("medium"); startNewLocalGame("ai"); }}>
             <div className="diff-badge">MEDIUM</div>
             <div className="diff-desc">AI tries to complete its own lines while occasionally blocking you.</div>
           </button>
-          <button className="diff-card diff-hard" onClick={() => selectDifficultyAndStart("hard")}>
+          <button className="diff-card diff-hard" onClick={() => { setDifficulty("hard"); startNewLocalGame("ai"); }}>
             <div className="diff-badge">HARD</div>
             <div className="diff-desc">AI intelligently prioritizes winning and blocking your strongest moves.</div>
           </button>
         </div>
-        <button className="btn btn-back" onClick={() => setScreen("mode_select")}>BACK TO MODES</button>
+        <button className="btn btn-back" onClick={() => setScreen("main_menu")}>
+          BACK TO MENU
+        </button>
       </div>
     );
   }
 
+  // --- SCREEN 7: ONLINE LOBBY ---
   if (screen === "online_lobby") {
     return (
       <div className="bingo-app mode-selection-page">
@@ -816,7 +1493,7 @@ function App() {
         <div className="online-status-bar">
           <span className={`ws-status-badge ${wsStatusClass}`}>{wsStatusLabel}</span>
           <span className="ws-debug-info">
-            Multiplayer Engine: <code>{activeWsUrl ? `WebSocket (${activeWsUrl})` : "WebRTC P2P (100% Free - Serverless)"}</code>
+            Multiplayer Engine: <code>{activeWsUrl => activeWsUrl ? `WebSocket (${activeWsUrl})` : "WebRTC P2P (100% Free - Serverless)"}</code>
           </span>
         </div>
 
@@ -834,21 +1511,20 @@ function App() {
         {onlineLobbyView === "menu" && (
           <div className="online-lobby-menu">
             <div className="lobby-options-container">
-              <button
-                className="lobby-action-card create-card"
-                onClick={handleCreateOnlineGame}
-              >
+              <button className="lobby-action-card create-card" onClick={handleCreateOnlineGame}>
                 <div className="lobby-card-title">CREATE GAME</div>
                 <div className="lobby-card-desc">
-                  {wsStatus === "connecting" ? "Connecting to server..." : "Generate a game code and wait for a friend"}
+                  {wsStatus === "connecting" ? "Connecting..." : "Generate a 6-digit room code and wait for a friend"}
                 </div>
               </button>
               <button className="lobby-action-card join-card" onClick={() => setOnlineLobbyView("join")}>
                 <div className="lobby-card-title">JOIN GAME</div>
-                <div className="lobby-card-desc">Enter an existing game code to play with an opponent</div>
+                <div className="lobby-card-desc">Enter an existing room code to play immediately</div>
               </button>
             </div>
-            <button className="btn btn-back" onClick={handleChangeMode}>BACK TO MODES</button>
+            <button className="btn btn-back" onClick={() => { disconnectMultiplayer(); setScreen("main_menu"); }}>
+              BACK TO MENU
+            </button>
           </div>
         )}
 
@@ -869,7 +1545,9 @@ function App() {
                 <button className="btn btn-join-submit" onClick={handleJoinOnlineGame}>
                   {wsStatus === "connecting" ? "CONNECTING..." : "JOIN GAME"}
                 </button>
-                <button className="btn btn-back" onClick={() => setOnlineLobbyView("menu")}>BACK</button>
+                <button className="btn btn-back" onClick={() => setOnlineLobbyView("menu")}>
+                  BACK
+                </button>
               </div>
             </div>
           </div>
@@ -887,7 +1565,9 @@ function App() {
               <div className="waiting-status-text">
                 <span className="spinner-dot"></span> Waiting for opponent to join...
               </div>
-              <button className="btn btn-leave-lobby" onClick={handleLeaveOnlineGame}>LEAVE GAME</button>
+              <button className="btn btn-leave-lobby" onClick={handleLeaveOnlineGame}>
+                LEAVE GAME
+              </button>
             </div>
           </div>
         )}
@@ -895,7 +1575,10 @@ function App() {
     );
   }
 
+  // --- SCREEN 8: IN-GAME PLAY ---
   const bingoMsg = getBingoMessage();
+  const myPlayerName = currentUser?.username || "You";
+  const opponentName = gameMode === "online" ? (onlinePlayerNum === 1 ? onlinePlayer2Name : onlinePlayer1Name) : gameMode === "ai" ? "AI" : "Player 2";
 
   return (
     <div className="bingo-app">
@@ -937,11 +1620,11 @@ function App() {
         </div>
         <div className="status-grid">
           <div className="status-item">
-            <span className="status-label">{gameMode === "online" ? "Your Lines" : gameMode === "ai" ? "Your Lines" : "Player 1 Lines"}</span>
+            <span className="status-label">{gameMode === "online" ? `${myPlayerName}'s Lines` : "Player 1 Lines"}</span>
             <span className="status-value p1-lines">{gameMode === "online" ? `${effectiveMyLines}/5` : `${p1Lines}/5`}</span>
           </div>
           <div className="status-item">
-            <span className="status-label">{gameMode === "online" ? "Opponent Lines" : gameMode === "ai" ? "AI Lines" : "Player 2 Lines"}</span>
+            <span className="status-label">{gameMode === "online" ? `${opponentName}'s Lines` : gameMode === "ai" ? "AI Lines" : "Player 2 Lines"}</span>
             <span className="status-value p2-lines">
               {gameMode === "online" ? (gameOver && opponentOnlineCard ? `${effectiveOppLines}/5` : "Hidden") : `${p2Lines}/5`}
             </span>
@@ -980,7 +1663,7 @@ function App() {
         {gameMode === "online" ? (
           <>
             <div className={`card-section ${onlinePlayerNum === 1 ? "p1-section" : "p2-section"} active-card`}>
-              <h3 className="card-label">YOUR CARD (PLAYER {onlinePlayerNum})</h3>
+              <h3 className="card-label">YOUR CARD ({myPlayerName.toUpperCase()})</h3>
               <div className="card-meta">
                 <span className="card-lines">YOUR LINES: {effectiveMyLines}/5</span>
                 <span className={`card-status card-status-${winner === `player${onlinePlayerNum}` ? "win" : winner === "draw" ? "draw" : winner !== null ? "lose" : currentPlayer === onlinePlayerNum && !gameOver ? "turn" : "wait"}`}>
@@ -1009,9 +1692,9 @@ function App() {
 
             {gameOver && opponentOnlineCard ? (
               <div className={`card-section ${onlinePlayerNum === 1 ? "p2-section" : "p1-section"} active-card reveal-opponent-card`}>
-                <h3 className="card-label">OPPONENT FINAL CARD (PLAYER {onlinePlayerNum === 1 ? 2 : 1})</h3>
+                <h3 className="card-label">{opponentName.toUpperCase()}'S FINAL CARD</h3>
                 <div className="card-meta">
-                  <span className="card-lines">OPPONENT LINES: {effectiveOppLines}/5</span>
+                  <span className="card-lines">{opponentName.toUpperCase()} LINES: {effectiveOppLines}/5</span>
                   <span className={`card-status card-status-${winner === `player${onlinePlayerNum === 1 ? 2 : 1}` ? "win" : winner === "draw" ? "draw" : "lose"}`}>
                     {winner === `player${onlinePlayerNum === 1 ? 2 : 1}` ? "WINS!" : winner === "draw" ? "Draw" : "Lost"}
                   </span>
@@ -1030,7 +1713,7 @@ function App() {
                 </div>
               </div>
             ) : (
-              <HiddenOpponentCard opponentConnected={opponentConnected} />
+              <HiddenOpponentCard opponentConnected={opponentConnected} opponentLabel={`${opponentName.toUpperCase()}'S CARD`} />
             )}
           </>
         ) : (
@@ -1040,11 +1723,11 @@ function App() {
               calledSet={calledSet}
               completedCellSet={p1CompletedCells}
               playerNum={1}
+              playerLabel={gameMode === "ai" ? "YOUR CARD" : "PLAYER 1"}
               isActive={!gameOver && currentPlayer === 1 && !aiThinking}
               lines={p1Lines}
               cardStatus={getCardStatus(1)}
               onNumberClick={(num) => handleNumberClick(1, num)}
-              gameMode={gameMode}
               lastCalledNumber={lastCalledNumber}
             />
             <BingoCard
@@ -1052,11 +1735,11 @@ function App() {
               calledSet={calledSet}
               completedCellSet={p2CompletedCells}
               playerNum={2}
+              playerLabel={gameMode === "ai" ? "AI CARD" : "PLAYER 2"}
               isActive={!gameOver && currentPlayer === 2 && gameMode === "two_player"}
               lines={p2Lines}
               cardStatus={getCardStatus(2)}
               onNumberClick={(num) => handleNumberClick(2, num)}
-              gameMode={gameMode}
               lastCalledNumber={lastCalledNumber}
             />
           </>
@@ -1073,19 +1756,49 @@ function App() {
             >
               {onlineResetRequested ? "WAITING FOR OPPONENT..." : onlineOpponentResetRequested ? "ACCEPT NEW GAME" : "REQUEST NEW GAME"}
             </button>
-            <button className="btn btn-leave" onClick={handleLeaveOnlineGame}>LEAVE GAME</button>
-            <button className="btn btn-mode" onClick={handleChangeMode}>CHANGE MODE</button>
+            <button className="btn btn-leave" onClick={handleLeaveOnlineGame}>
+              LEAVE GAME
+            </button>
+            <button className="btn btn-mode" onClick={() => { disconnectMultiplayer(); setScreen("main_menu"); }}>
+              MAIN MENU
+            </button>
           </>
         ) : (
           <>
-            <button className="btn btn-reset" onClick={handleReset}>RESET GAME</button>
+            <button className="btn btn-reset" onClick={resetLocalGameState}>
+              RESET GAME
+            </button>
             {gameMode === "ai" && (
-              <button className="btn btn-diff" onClick={handleChangeDifficulty}>CHANGE DIFFICULTY</button>
+              <button className="btn btn-diff" onClick={() => setScreen("diff_select")}>
+                CHANGE DIFFICULTY
+              </button>
             )}
-            <button className="btn btn-mode" onClick={handleChangeMode}>CHANGE MODE</button>
+            <button className="btn btn-mode" onClick={() => setScreen("main_menu")}>
+              MAIN MENU
+            </button>
           </>
         )}
       </div>
+
+      {/* Real-time Friend Game Invitation Modal */}
+      {incomingInvite && (
+        <div className="invite-modal-overlay">
+          <div className="invite-modal-card">
+            <h3 className="invite-modal-title">GAME INVITATION</h3>
+            <p className="invite-modal-desc">
+              <strong>{incomingInvite.inviterUsername}</strong> has invited you to play Bingo!
+            </p>
+            <div className="invite-modal-actions">
+              <button className="btn btn-accept" onClick={handleAcceptInvite}>
+                ACCEPT
+              </button>
+              <button className="btn btn-decline" onClick={handleDeclineInvite}>
+                DECLINE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

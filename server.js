@@ -1,11 +1,21 @@
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
 
-const PORT = process.env.PORT || 8081;
+dotenv.config();
+
+const PORT = process.env.PORT || 8080;
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+  : null;
 
 const server = createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Bingo WebSocket Server Running');
+  res.end('Bingo WebSocket & Realtime Server Running');
 });
 
 const wss = new WebSocketServer({ server });
@@ -81,10 +91,48 @@ function generateRoomId() {
 }
 
 const rooms = new Map();
+const connectedUsers = new Map(); // userId -> { ws, username }
 
 function send(ws, data) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(data));
+    try {
+      ws.send(JSON.stringify(data));
+    } catch (e) {
+      console.error('Error sending WS message:', e.message);
+    }
+  }
+}
+
+async function saveMatchRecord(room) {
+  if (!supabase) return;
+  try {
+    const p1Id = room.player1?.id && !room.player1.id.startsWith('guest_') ? room.player1.id : null;
+    const p2Id = room.player2?.id && !room.player2.id.startsWith('guest_') ? room.player2.id : null;
+    const winnerId = room.winner === 'player1' ? p1Id : room.winner === 'player2' ? p2Id : null;
+
+    const calledSet = new Set(room.calledNumbers);
+    const p1Lines = getCompletedLineIndices(room.player1Card, calledSet).length;
+    const p2Lines = getCompletedLineIndices(room.player2Card, calledSet).length;
+
+    await supabase.from('online_matches').insert({
+      room_id: room.roomId,
+      player1_id: p1Id,
+      player2_id: p2Id,
+      player1_username: room.player1?.username || 'Player 1',
+      player2_username: room.player2?.username || 'Player 2',
+      winner_id: winnerId,
+      result: room.winner,
+      player1_lines: p1Lines,
+      player2_lines: p2Lines,
+      called_numbers: room.calledNumbers,
+      last_called_number: room.lastCalledNumber,
+      total_called: room.calledNumbers.length,
+      started_at: room.startedAt,
+      ended_at: new Date().toISOString(),
+    });
+    console.log(`Match ${room.roomId} saved to Supabase.`);
+  } catch (err) {
+    console.warn('Error saving match record to Supabase:', err.message);
   }
 }
 
@@ -96,6 +144,8 @@ function broadcastRoomState(room) {
   const baseState = {
     type: 'game_state',
     roomId: room.roomId,
+    player1Username: room.player1?.username || 'Player 1',
+    player2Username: room.player2?.username || 'Player 2',
     calledNumbers: [...room.calledNumbers],
     lastCalledNumber: room.lastCalledNumber,
     currentTurn: room.currentTurn,
@@ -108,8 +158,8 @@ function broadcastRoomState(room) {
   if (room.gameOver) {
     const fullRevealState = {
       ...baseState,
-      player1Card: room.player1Card,
-      player2Card: room.player2Card,
+      player1Card: [...room.player1Card],
+      player2Card: [...room.player2Card],
       player1Lines: p1Lines,
       player2Lines: p2Lines,
     };
@@ -118,7 +168,10 @@ function broadcastRoomState(room) {
       send(room.player1.ws, {
         ...fullRevealState,
         playerNum: 1,
-        myCard: room.player1Card,
+        playerId: 'player1',
+        myCard: [...room.player1Card],
+        opponentCard: [...room.player2Card],
+        opponentUsername: room.player2?.username || 'Player 2',
         opponentConnected: !!room.player2?.ws,
         resetRequestedByOpponent: room.resetRequests.has(2),
         myResetRequested: room.resetRequests.has(1),
@@ -129,7 +182,10 @@ function broadcastRoomState(room) {
       send(room.player2.ws, {
         ...fullRevealState,
         playerNum: 2,
-        myCard: room.player2Card,
+        playerId: 'player2',
+        myCard: [...room.player2Card],
+        opponentCard: [...room.player1Card],
+        opponentUsername: room.player1?.username || 'Player 1',
         opponentConnected: !!room.player1?.ws,
         resetRequestedByOpponent: room.resetRequests.has(1),
         myResetRequested: room.resetRequests.has(2),
@@ -140,8 +196,10 @@ function broadcastRoomState(room) {
       send(room.player1.ws, {
         ...baseState,
         playerNum: 1,
-        myCard: room.player1Card,
+        playerId: 'player1',
+        myCard: [...room.player1Card],
         myLines: p1Lines,
+        opponentUsername: room.player2?.username || 'Player 2',
         opponentConnected: !!room.player2?.ws,
         resetRequestedByOpponent: room.resetRequests.has(2),
         myResetRequested: room.resetRequests.has(1),
@@ -152,8 +210,10 @@ function broadcastRoomState(room) {
       send(room.player2.ws, {
         ...baseState,
         playerNum: 2,
-        myCard: room.player2Card,
+        playerId: 'player2',
+        myCard: [...room.player2Card],
         myLines: p2Lines,
+        opponentUsername: room.player1?.username || 'Player 1',
         opponentConnected: !!room.player1?.ws,
         resetRequestedByOpponent: room.resetRequests.has(1),
         myResetRequested: room.resetRequests.has(2),
@@ -165,12 +225,54 @@ function broadcastRoomState(room) {
 wss.on('connection', (ws) => {
   let currentRoomId = null;
   let currentPlayerNum = null;
+  let currentUserId = null;
+
+  send(ws, { type: 'connected', message: 'Connected to Bingo WebSocket server' });
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message.toString());
+      const type = (data.type || '').toLowerCase();
 
-      if (data.type === 'create_room') {
+      // Register presence for friend invitations & status
+      if (type === 'register_user') {
+        if (data.userId) {
+          currentUserId = data.userId;
+          connectedUsers.set(data.userId, { ws, username: data.username || 'Player' });
+        }
+        return;
+      }
+
+      // Friend Game Invitation Relay
+      if (type === 'friend_invite') {
+        const target = connectedUsers.get(data.targetUserId);
+        if (target && target.ws.readyState === WebSocket.OPEN) {
+          send(target.ws, {
+            type: 'friend_invite_received',
+            inviterId: data.inviterId,
+            inviterUsername: data.inviterUsername,
+            roomId: data.roomId,
+          });
+        } else {
+          send(ws, { type: 'error', message: 'Friend is currently offline.' });
+        }
+        return;
+      }
+
+      if (type === 'friend_invite_response') {
+        const inviter = connectedUsers.get(data.inviterId);
+        if (inviter && inviter.ws.readyState === WebSocket.OPEN) {
+          send(inviter.ws, {
+            type: 'friend_invite_response',
+            accept: data.accept,
+            roomId: data.roomId,
+            respondentUsername: data.respondentUsername,
+          });
+        }
+        return;
+      }
+
+      if (type === 'create_room') {
         let roomId = generateRoomId();
         while (rooms.has(roomId)) {
           roomId = generateRoomId();
@@ -178,7 +280,11 @@ wss.on('connection', (ws) => {
 
         const room = {
           roomId,
-          player1: { ws, id: data.playerId || 'p1' },
+          player1: {
+            ws,
+            id: data.playerId || 'p1',
+            username: data.username || 'Player 1',
+          },
           player2: null,
           player1Card: createShuffledCard(),
           player2Card: createShuffledCard(),
@@ -189,6 +295,7 @@ wss.on('connection', (ws) => {
           gameOver: false,
           winner: null,
           resetRequests: new Set(),
+          startedAt: new Date().toISOString(),
         };
 
         rooms.set(roomId, room);
@@ -199,13 +306,15 @@ wss.on('connection', (ws) => {
           type: 'room_created',
           roomId,
           playerNum: 1,
+          playerId: 'player1',
           playerCount: 1,
-          myCard: room.player1Card,
+          myCard: [...room.player1Card],
+          player1Username: room.player1.username,
         });
         return;
       }
 
-      if (data.type === 'join_room') {
+      if (type === 'join_room') {
         const roomId = (data.roomId || '').trim().toUpperCase();
         const room = rooms.get(roomId);
 
@@ -229,11 +338,17 @@ wss.on('connection', (ws) => {
           return;
         }
 
+        const playerInfo = {
+          ws,
+          id: data.playerId || 'p2',
+          username: data.username || 'Player 2',
+        };
+
         if (!room.player1) {
-          room.player1 = { ws, id: data.playerId || 'p1' };
+          room.player1 = playerInfo;
           currentPlayerNum = 1;
         } else {
-          room.player2 = { ws, id: data.playerId || 'p2' };
+          room.player2 = playerInfo;
           currentPlayerNum = 2;
         }
 
@@ -241,13 +356,15 @@ wss.on('connection', (ws) => {
 
         if (room.player1 && room.player2) {
           room.gameStatus = 'in_progress';
+          send(room.player1.ws, { type: 'game_started' });
+          send(room.player2.ws, { type: 'game_started' });
         }
 
         broadcastRoomState(room);
         return;
       }
 
-      if (data.type === 'make_move') {
+      if (type === 'select_number' || type === 'make_move') {
         if (!currentRoomId || !currentPlayerNum) return;
         const room = rooms.get(currentRoomId);
         if (!room) return;
@@ -274,6 +391,7 @@ wss.on('connection', (ws) => {
           room.gameOver = true;
           room.gameStatus = 'game_over';
           room.winner = result;
+          saveMatchRecord(room);
         } else {
           room.currentTurn = room.currentTurn === 1 ? 2 : 1;
         }
@@ -282,7 +400,7 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      if (data.type === 'request_new_game') {
+      if (type === 'request_restart' || type === 'request_new_game') {
         if (!currentRoomId || !currentPlayerNum) return;
         const room = rooms.get(currentRoomId);
         if (!room) return;
@@ -299,13 +417,14 @@ wss.on('connection', (ws) => {
           room.gameOver = false;
           room.winner = null;
           room.resetRequests.clear();
+          room.startedAt = new Date().toISOString();
         }
 
         broadcastRoomState(room);
         return;
       }
 
-      if (data.type === 'leave_room') {
+      if (type === 'leave_room') {
         if (!currentRoomId) return;
         const room = rooms.get(currentRoomId);
         if (room) {
@@ -326,33 +445,35 @@ wss.on('connection', (ws) => {
         currentPlayerNum = null;
         return;
       }
-    } catch {
-      send(ws, { type: 'error', message: 'Internal error processing message.' });
+    } catch (e) {
+      console.error('Error handling message:', e.message);
     }
   });
 
   ws.on('close', () => {
-    if (!currentRoomId) return;
-    const room = rooms.get(currentRoomId);
-    if (room) {
-      if (currentPlayerNum === 1) {
-        room.player1 = null;
-      } else if (currentPlayerNum === 2) {
-        room.player2 = null;
-      }
-
-      if (!room.player1 && !room.player2) {
-        rooms.delete(currentRoomId);
-      } else {
-        if (!room.gameOver) {
-          room.gameStatus = 'opponent_disconnected';
+    if (currentUserId) {
+      connectedUsers.delete(currentUserId);
+    }
+    if (currentRoomId) {
+      const room = rooms.get(currentRoomId);
+      if (room) {
+        if (currentPlayerNum === 1 && room.player1?.ws === ws) {
+          room.player1.ws = null;
+        } else if (currentPlayerNum === 2 && room.player2?.ws === ws) {
+          room.player2.ws = null;
         }
-        broadcastRoomState(room);
+
+        if ((!room.player1 || !room.player1.ws) && (!room.player2 || !room.player2.ws)) {
+          rooms.delete(currentRoomId);
+        } else {
+          room.gameStatus = 'opponent_disconnected';
+          broadcastRoomState(room);
+        }
       }
     }
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`Bingo server running on port ${PORT}`);
 });

@@ -3,7 +3,7 @@ const WebSocket = require("ws");
 const PORT = process.env.PORT || 8080;
 
 const wss = new WebSocket.Server({
-  port: PORT
+  port: PORT,
 });
 
 console.log(`WebSocket server running on port ${PORT}`);
@@ -79,20 +79,7 @@ function generateRoomId() {
 }
 
 const rooms = new Map();
-const ROOM_CLEANUP_DELAY = 60 * 1000;
-
-function scheduleRoomCleanup(roomId) {
-  setTimeout(() => {
-    const room = rooms.get(roomId);
-    if (!room) return;
-    const p1Active = room.player1 && room.player1.ws && room.player1.ws.readyState === WebSocket.OPEN;
-    const p2Active = room.player2 && room.player2.ws && room.player2.ws.readyState === WebSocket.OPEN;
-    if (!p1Active && !p2Active) {
-      rooms.delete(roomId);
-      console.log(`Room ${roomId} cleaned up`);
-    }
-  }, ROOM_CLEANUP_DELAY);
-}
+const connectedUsers = new Map();
 
 function send(ws, data) {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -112,6 +99,8 @@ function broadcastGameState(room) {
   const sharedState = {
     type: "game_state",
     roomId: room.roomId,
+    player1Username: room.player1?.username || "Player 1",
+    player2Username: room.player2?.username || "Player 2",
     calledNumbers: [...room.calledNumbers],
     lastCalledNumber: room.lastCalledNumber,
     currentTurn: room.currentTurn,
@@ -128,17 +117,18 @@ function broadcastGameState(room) {
       ...sharedState,
       playerNum: 1,
       playerId: "player1",
-      ownCard: room.player1Card,
-      myCard: room.player1Card,
+      ownCard: [...room.player1Card],
+      myCard: [...room.player1Card],
       myLines: p1Lines,
+      opponentUsername: room.player2?.username || "Player 2",
       opponentConnected: !!(room.player2 && room.player2.ws && room.player2.ws.readyState === WebSocket.OPEN),
       myResetRequested: room.resetRequests.has(1),
       resetRequestedByOpponent: room.resetRequests.has(2),
     };
     if (room.gameOver) {
-      p1Msg.opponentCard = room.player2Card;
-      p1Msg.player1Card = room.player1Card;
-      p1Msg.player2Card = room.player2Card;
+      p1Msg.opponentCard = [...room.player2Card];
+      p1Msg.player1Card = [...room.player1Card];
+      p1Msg.player2Card = [...room.player2Card];
       p1Msg.player1Lines = p1Lines;
       p1Msg.player2Lines = p2Lines;
     }
@@ -151,17 +141,18 @@ function broadcastGameState(room) {
       ...sharedState,
       playerNum: 2,
       playerId: "player2",
-      ownCard: room.player2Card,
-      myCard: room.player2Card,
+      ownCard: [...room.player2Card],
+      myCard: [...room.player2Card],
       myLines: p2Lines,
+      opponentUsername: room.player1?.username || "Player 1",
       opponentConnected: !!(room.player1 && room.player1.ws && room.player1.ws.readyState === WebSocket.OPEN),
       myResetRequested: room.resetRequests.has(2),
       resetRequestedByOpponent: room.resetRequests.has(1),
     };
     if (room.gameOver) {
-      p2Msg.opponentCard = room.player1Card;
-      p2Msg.player1Card = room.player1Card;
-      p2Msg.player2Card = room.player2Card;
+      p2Msg.opponentCard = [...room.player1Card];
+      p2Msg.player1Card = [...room.player1Card];
+      p2Msg.player2Card = [...room.player2Card];
       p2Msg.player1Lines = p1Lines;
       p2Msg.player2Lines = p2Lines;
     }
@@ -170,22 +161,16 @@ function broadcastGameState(room) {
 }
 
 wss.on("connection", (ws) => {
-  console.log("Client connected");
-
   let currentRoomId = null;
   let currentPlayerNum = null;
-  let currentPlayerId = null;
+  let currentUserId = null;
 
-  // Send initial connected confirmation
   send(ws, { type: "connected", message: "Connected to Bingo WebSocket server" });
 
   ws.on("message", (rawMessage) => {
-    let messageStr = rawMessage.toString();
-    console.log("Received:", messageStr);
-
     let data;
     try {
-      data = JSON.parse(messageStr);
+      data = JSON.parse(rawMessage.toString());
     } catch (e) {
       send(ws, { type: "error", message: "Invalid message format." });
       return;
@@ -194,16 +179,53 @@ wss.on("connection", (ws) => {
     try {
       const type = (data.type || "").toLowerCase();
 
+      if (type === "register_user") {
+        if (data.userId) {
+          currentUserId = data.userId;
+          connectedUsers.set(data.userId, { ws, username: data.username || "Player" });
+        }
+        return;
+      }
+
+      if (type === "friend_invite") {
+        const target = connectedUsers.get(data.targetUserId);
+        if (target && target.ws.readyState === WebSocket.OPEN) {
+          send(target.ws, {
+            type: "friend_invite_received",
+            inviterId: data.inviterId,
+            inviterUsername: data.inviterUsername,
+            roomId: data.roomId,
+          });
+        } else {
+          send(ws, { type: "error", message: "Friend is currently offline." });
+        }
+        return;
+      }
+
+      if (type === "friend_invite_response") {
+        const inviter = connectedUsers.get(data.inviterId);
+        if (inviter && inviter.ws.readyState === WebSocket.OPEN) {
+          send(inviter.ws, {
+            type: "friend_invite_response",
+            accept: data.accept,
+            roomId: data.roomId,
+            respondentUsername: data.respondentUsername,
+          });
+        }
+        return;
+      }
+
       if (type === "create_room") {
         let roomId = generateRoomId();
         while (rooms.has(roomId)) roomId = generateRoomId();
 
-        const playerId = data.playerId || ("p1_" + Math.random().toString(36).substring(2, 9));
-        currentPlayerId = playerId;
-
         const room = {
           roomId,
-          player1: { ws, id: playerId },
+          player1: {
+            ws,
+            id: data.playerId || "p1",
+            username: data.username || "Player 1",
+          },
           player2: null,
           player1Card: createShuffledCard(),
           player2Card: createShuffledCard(),
@@ -214,13 +236,12 @@ wss.on("connection", (ws) => {
           gameOver: false,
           winner: null,
           resetRequests: new Set(),
+          startedAt: new Date().toISOString(),
         };
 
         rooms.set(roomId, room);
         currentRoomId = roomId;
         currentPlayerNum = 1;
-
-        console.log(`Room created: ${roomId} by player ${playerId}`);
 
         send(ws, {
           type: "room_created",
@@ -228,9 +249,8 @@ wss.on("connection", (ws) => {
           playerNum: 1,
           playerId: "player1",
           playerCount: 1,
-          myCard: room.player1Card,
-          ownCard: room.player1Card,
-          gameStatus: "waiting",
+          myCard: [...room.player1Card],
+          player1Username: room.player1.username,
         });
         return;
       }
@@ -244,110 +264,40 @@ wss.on("connection", (ws) => {
           return;
         }
 
-        if (room.gameStatus !== "waiting") {
-          // Check for reconnect
-          if (data.playerId && room.player1 && room.player1.id === data.playerId) {
-            room.player1.ws = ws;
+        if (room.player1 && room.player2) {
+          if (data.playerId && (room.player1.id === data.playerId || room.player2.id === data.playerId)) {
+            const isP1 = room.player1.id === data.playerId;
+            if (isP1) room.player1.ws = ws;
+            else room.player2.ws = ws;
             currentRoomId = roomId;
-            currentPlayerNum = 1;
-            currentPlayerId = data.playerId;
-            broadcastGameState(room);
-            return;
-          }
-          if (data.playerId && room.player2 && room.player2.id === data.playerId) {
-            room.player2.ws = ws;
-            currentRoomId = roomId;
-            currentPlayerNum = 2;
-            currentPlayerId = data.playerId;
+            currentPlayerNum = isP1 ? 1 : 2;
             broadcastGameState(room);
             return;
           }
           send(ws, { type: "error", message: "GAME IS FULL" });
           return;
         }
+
+        const playerInfo = {
+          ws,
+          id: data.playerId || "p2",
+          username: data.username || "Player 2",
+        };
+
+        if (!room.player1) {
+          room.player1 = playerInfo;
+          currentPlayerNum = 1;
+        } else {
+          room.player2 = playerInfo;
+          currentPlayerNum = 2;
+        }
+
+        currentRoomId = roomId;
 
         if (room.player1 && room.player2) {
-          send(ws, { type: "error", message: "GAME IS FULL" });
-          return;
-        }
-
-        const playerId = data.playerId || ("p2_" + Math.random().toString(36).substring(2, 9));
-        currentPlayerId = playerId;
-
-        room.player2 = { ws, id: playerId };
-        room.gameStatus = "in_progress";
-        currentRoomId = roomId;
-        currentPlayerNum = 2;
-
-        console.log(`Player ${playerId} joined room ${roomId}. Starting game.`);
-
-        send(ws, {
-          type: "room_joined",
-          roomId,
-          playerNum: 2,
-          playerId: "player2",
-          myCard: room.player2Card,
-          ownCard: room.player2Card,
-          gameStatus: "in_progress",
-        });
-
-        if (room.player1 && room.player1.ws) {
-          send(room.player1.ws, {
-            type: "game_started",
-            roomId,
-            playerCount: 2,
-          });
-        }
-
-        send(ws, {
-          type: "game_started",
-          roomId,
-          playerCount: 2,
-        });
-
-        broadcastGameState(room);
-        return;
-      }
-
-      if (type === "reconnect") {
-        const roomId = (data.roomId || "").trim().toUpperCase();
-        const playerId = data.playerId;
-        const room = rooms.get(roomId);
-
-        if (!room || !playerId) {
-          send(ws, { type: "error", message: "Cannot reconnect. Room not found." });
-          return;
-        }
-
-        let reconnectedAs = null;
-        if (room.player1 && room.player1.id === playerId) {
-          room.player1.ws = ws;
-          reconnectedAs = 1;
-        } else if (room.player2 && room.player2.id === playerId) {
-          room.player2.ws = ws;
-          reconnectedAs = 2;
-        }
-
-        if (!reconnectedAs) {
-          send(ws, { type: "error", message: "Cannot reconnect. Player not found in room." });
-          return;
-        }
-
-        currentRoomId = roomId;
-        currentPlayerNum = reconnectedAs;
-        currentPlayerId = playerId;
-
-        console.log(`Player ${playerId} reconnected to room ${roomId} as Player ${reconnectedAs}`);
-
-        if (room.gameStatus === "opponent_disconnected") {
-          const opponentActive =
-            reconnectedAs === 1
-              ? room.player2 && room.player2.ws && room.player2.ws.readyState === WebSocket.OPEN
-              : room.player1 && room.player1.ws && room.player1.ws.readyState === WebSocket.OPEN;
-
-          if (opponentActive && !room.gameOver) {
-            room.gameStatus = "in_progress";
-          }
+          room.gameStatus = "in_progress";
+          send(room.player1.ws, { type: "game_started" });
+          send(room.player2.ws, { type: "game_started" });
         }
 
         broadcastGameState(room);
@@ -355,52 +305,22 @@ wss.on("connection", (ws) => {
       }
 
       if (type === "select_number" || type === "make_move") {
-        if (!currentRoomId || !currentPlayerNum) {
-          send(ws, { type: "invalid_move", message: "INVALID MOVE" });
-          return;
-        }
+        if (!currentRoomId || !currentPlayerNum) return;
         const room = rooms.get(currentRoomId);
-        if (!room) {
-          send(ws, { type: "invalid_move", message: "GAME NOT FOUND" });
-          return;
-        }
+        if (!room) return;
 
-        if (room.gameOver) {
-          send(ws, { type: "invalid_move", message: "GAME OVER" });
-          return;
-        }
-
-        if (room.gameStatus !== "in_progress") {
-          send(ws, { type: "invalid_move", message: "INVALID MOVE" });
-          return;
-        }
-
-        if (room.currentTurn !== currentPlayerNum) {
-          send(ws, { type: "invalid_move", message: "NOT YOUR TURN" });
-          return;
-        }
+        if (room.gameOver || room.gameStatus !== "in_progress") return;
+        if (room.currentTurn !== currentPlayerNum) return;
 
         const number = parseInt(data.number, 10);
-        if (isNaN(number) || number < 1 || number > 25) {
-          send(ws, { type: "invalid_move", message: "INVALID NUMBER" });
-          return;
-        }
-
-        if (room.calledNumbers.includes(number)) {
-          send(ws, { type: "invalid_move", message: "NUMBER ALREADY CALLED" });
-          return;
-        }
+        if (isNaN(number) || number < 1 || number > 25) return;
+        if (room.calledNumbers.includes(number)) return;
 
         const playerCard = currentPlayerNum === 1 ? room.player1Card : room.player2Card;
-        if (!playerCard.includes(number)) {
-          send(ws, { type: "invalid_move", message: "INVALID NUMBER" });
-          return;
-        }
+        if (!playerCard.includes(number)) return;
 
         room.calledNumbers.push(number);
         room.lastCalledNumber = number;
-
-        console.log(`Room ${currentRoomId}: Player ${currentPlayerNum} selected ${number}`);
 
         const calledSet = new Set(room.calledNumbers);
         const p1Lines = countCompletedLines(room.player1Card, calledSet);
@@ -411,7 +331,6 @@ wss.on("connection", (ws) => {
           room.gameOver = true;
           room.gameStatus = "game_over";
           room.winner = result;
-          console.log(`Room ${currentRoomId} Game Over! Winner: ${result}`);
         } else {
           room.currentTurn = room.currentTurn === 1 ? 2 : 1;
         }
@@ -427,16 +346,6 @@ wss.on("connection", (ws) => {
 
         room.resetRequests.add(currentPlayerNum);
 
-        const oppNum = currentPlayerNum === 1 ? 2 : 1;
-        const oppWs = oppNum === 1 ? room.player1?.ws : room.player2?.ws;
-        if (oppWs) {
-          send(oppWs, {
-            type: "restart_request",
-            requestedBy: `player${currentPlayerNum}`,
-            message: `PLAYER ${currentPlayerNum} WANTS TO START A NEW GAME`
-          });
-        }
-
         if (room.resetRequests.has(1) && room.resetRequests.has(2)) {
           room.player1Card = createShuffledCard();
           room.player2Card = createShuffledCard();
@@ -447,45 +356,7 @@ wss.on("connection", (ws) => {
           room.gameOver = false;
           room.winner = null;
           room.resetRequests.clear();
-
-          console.log(`Room ${currentRoomId} restarted with new cards`);
-
-          if (room.player1?.ws) send(room.player1.ws, { type: "restart_accepted" });
-          if (room.player2?.ws) send(room.player2.ws, { type: "restart_accepted" });
-        }
-
-        broadcastGameState(room);
-        return;
-      }
-
-      if (type === "restart_response" || type === "response_restart") {
-        if (!currentRoomId || !currentPlayerNum) return;
-        const room = rooms.get(currentRoomId);
-        if (!room) return;
-
-        if (data.accept) {
-          room.resetRequests.add(currentPlayerNum);
-          if (room.resetRequests.has(1) && room.resetRequests.has(2)) {
-            room.player1Card = createShuffledCard();
-            room.player2Card = createShuffledCard();
-            room.calledNumbers = [];
-            room.lastCalledNumber = null;
-            room.currentTurn = 1;
-            room.gameStatus = "in_progress";
-            room.gameOver = false;
-            room.winner = null;
-            room.resetRequests.clear();
-
-            if (room.player1?.ws) send(room.player1.ws, { type: "restart_accepted" });
-            if (room.player2?.ws) send(room.player2.ws, { type: "restart_accepted" });
-          }
-        } else {
-          room.resetRequests.clear();
-          const oppNum = currentPlayerNum === 1 ? 2 : 1;
-          const oppWs = oppNum === 1 ? room.player1?.ws : room.player2?.ws;
-          if (oppWs) {
-            send(oppWs, { type: "restart_declined", message: "Opponent declined new game request." });
-          }
+          room.startedAt = new Date().toISOString();
         }
 
         broadcastGameState(room);
@@ -496,61 +367,40 @@ wss.on("connection", (ws) => {
         if (!currentRoomId) return;
         const room = rooms.get(currentRoomId);
         if (room) {
-          console.log(`Player ${currentPlayerNum} left room ${currentRoomId}`);
-          if (currentPlayerNum === 1) {
-            room.player1 = null;
-          } else if (currentPlayerNum === 2) {
-            room.player2 = null;
-          }
+          if (currentPlayerNum === 1) room.player1 = null;
+          else if (currentPlayerNum === 2) room.player2 = null;
 
-          const anyLeft = room.player1 || room.player2;
-          if (!anyLeft) {
+          if (!room.player1 && !room.player2) {
             rooms.delete(currentRoomId);
-            console.log(`Room ${currentRoomId} deleted (empty)`);
           } else {
             room.gameStatus = "opponent_disconnected";
             broadcastGameState(room);
-            scheduleRoomCleanup(currentRoomId);
           }
         }
         currentRoomId = null;
         currentPlayerNum = null;
-        currentPlayerId = null;
         return;
       }
-    } catch (err) {
-      console.error("Server error handling message:", err);
-      send(ws, { type: "error", message: "Server error processing your request." });
+    } catch (e) {
+      console.error("Error processing message:", e.message);
     }
   });
 
   ws.on("close", () => {
-    console.log("Client disconnected");
-    if (!currentRoomId) return;
-    const room = rooms.get(currentRoomId);
-    if (!room) return;
+    if (currentUserId) connectedUsers.delete(currentUserId);
+    if (currentRoomId) {
+      const room = rooms.get(currentRoomId);
+      if (room) {
+        if (currentPlayerNum === 1 && room.player1?.ws === ws) room.player1.ws = null;
+        else if (currentPlayerNum === 2 && room.player2?.ws === ws) room.player2.ws = null;
 
-    if (currentPlayerNum === 1 && room.player1) {
-      room.player1 = { id: currentPlayerId, ws: null };
-    } else if (currentPlayerNum === 2 && room.player2) {
-      room.player2 = { id: currentPlayerId, ws: null };
-    }
-
-    const p1HasWs = room.player1 && room.player1.ws && room.player1.ws.readyState === WebSocket.OPEN;
-    const p2HasWs = room.player2 && room.player2.ws && room.player2.ws.readyState === WebSocket.OPEN;
-
-    if (!p1HasWs && !p2HasWs) {
-      scheduleRoomCleanup(currentRoomId);
-    } else {
-      if (!room.gameOver) {
-        room.gameStatus = "opponent_disconnected";
+        if ((!room.player1 || !room.player1.ws) && (!room.player2 || !room.player2.ws)) {
+          rooms.delete(currentRoomId);
+        } else {
+          room.gameStatus = "opponent_disconnected";
+          broadcastGameState(room);
+        }
       }
-      broadcastGameState(room);
-      scheduleRoomCleanup(currentRoomId);
     }
-  });
-
-  ws.on("error", (err) => {
-    console.error("WebSocket client error:", err.message);
   });
 });

@@ -1,4 +1,5 @@
 import Peer from "peerjs";
+import { recordOnlineMatch } from "./services/historyService";
 
 function shuffleArray(array) {
   const shuffled = [...array];
@@ -25,11 +26,42 @@ function generateRoomCode() {
 
 const PEER_PREFIX = "bingo-multiplayer-shaurya-";
 
-/**
- * Universal Multiplayer Client
- * Supports both WebRTC Peer-to-Peer (100% Free, Zero Server Setup)
- * and optional custom WebSocket servers with automatic fallback.
- */
+function countLines(card, calledSet) {
+  if (!card || card.length !== 25) return 0;
+  let count = 0;
+  // Rows
+  for (let r = 0; r < 5; r++) {
+    let full = true;
+    for (let c = 0; c < 5; c++) {
+      if (!calledSet.has(card[r * 5 + c])) {
+        full = false;
+        break;
+      }
+    }
+    if (full) count++;
+  }
+  // Columns
+  for (let c = 0; c < 5; c++) {
+    let full = true;
+    for (let r = 0; r < 5; r++) {
+      if (!calledSet.has(card[r * 5 + c])) {
+        full = false;
+        break;
+      }
+    }
+    if (full) count++;
+  }
+  // Diagonals
+  let d1 = true, d2 = true;
+  for (let i = 0; i < 5; i++) {
+    if (!calledSet.has(card[i * 5 + i])) d1 = false;
+    if (!calledSet.has(card[i * 5 + (4 - i)])) d2 = false;
+  }
+  if (d1) count++;
+  if (d2) count++;
+  return count;
+}
+
 export class MultiplayerClient {
   constructor({ wsUrl, onMessage, onError, onStatusChange }) {
     this.wsUrl = wsUrl || null;
@@ -45,6 +77,7 @@ export class MultiplayerClient {
     this.roomId = null;
     this.playerId = null;
     this.playerNum = 1;
+    this.currentUser = null;
 
     // Host room state (for p2p mode)
     this.hostState = null;
@@ -131,11 +164,17 @@ export class MultiplayerClient {
     this.connectPeer(onReady);
   }
 
-  createRoom(playerId) {
-    this.playerId = playerId;
+  createRoom(user) {
+    const safeUser = user || { id: "guest_" + Date.now(), username: "Player 1" };
+    this.currentUser = safeUser;
+    this.playerId = safeUser.id;
 
     if (this.mode === "ws" && this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "create_room", playerId }));
+      this.ws.send(JSON.stringify({
+        type: "create_room",
+        playerId: safeUser.id,
+        username: safeUser.username,
+      }));
       return;
     }
 
@@ -152,9 +191,7 @@ export class MultiplayerClient {
     }
 
     try {
-      this.peer = new Peer(peerId, {
-        debug: 1,
-      });
+      this.peer = new Peer(peerId, { debug: 1 });
     } catch (err) {
       this.onError("Could not initialize multiplayer: " + err.message);
       return;
@@ -165,6 +202,8 @@ export class MultiplayerClient {
 
     this.hostState = {
       roomId: roomCode,
+      player1User: safeUser,
+      player2User: null,
       player1Card: hostCard,
       player2Card: guestCard,
       calledNumbers: [],
@@ -176,6 +215,7 @@ export class MultiplayerClient {
       player2Lines: 0,
       p1Reset: false,
       p2Reset: false,
+      startedAt: new Date().toISOString(),
     };
 
     this.peer.on("open", () => {
@@ -186,6 +226,7 @@ export class MultiplayerClient {
         playerNum: 1,
         playerCount: 1,
         ownCard: hostCard,
+        player1Username: safeUser.username,
       });
     });
 
@@ -193,20 +234,7 @@ export class MultiplayerClient {
       this.conn = conn;
 
       conn.on("open", () => {
-        // Send initial state to Guest
-        conn.send({
-          type: "room_joined",
-          roomId: roomCode,
-          playerNum: 2,
-          ownCard: guestCard,
-        });
-
-        // Notify both that game has started
-        setTimeout(() => {
-          this.broadcastP2PGameState();
-          this.onMessage({ type: "game_started" });
-          conn.send({ type: "game_started" });
-        }, 100);
+        // Guest will send join_request with its user details
       });
 
       conn.on("data", (data) => {
@@ -225,20 +253,27 @@ export class MultiplayerClient {
     this.peer.on("error", (err) => {
       console.error("PeerJS error:", err);
       if (err.type === "unavailable-id") {
-        this.createRoom(playerId);
+        this.createRoom(user);
       } else {
         this.onError("Multiplayer connection error: " + (err.message || "Failed to create room."));
       }
     });
   }
 
-  joinRoom(roomCode, playerId) {
-    this.playerId = playerId;
+  joinRoom(roomCode, user) {
+    const safeUser = user || { id: "guest_" + Date.now(), username: "Player 2" };
+    this.currentUser = safeUser;
+    this.playerId = safeUser.id;
     const cleanCode = roomCode.trim().toUpperCase();
     this.roomId = cleanCode;
 
     if (this.mode === "ws" && this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "join_room", roomId: cleanCode, playerId }));
+      this.ws.send(JSON.stringify({
+        type: "join_room",
+        roomId: cleanCode,
+        playerId: safeUser.id,
+        username: safeUser.username,
+      }));
       return;
     }
 
@@ -252,9 +287,7 @@ export class MultiplayerClient {
     }
 
     try {
-      this.peer = new Peer({
-        debug: 1,
-      });
+      this.peer = new Peer({ debug: 1 });
     } catch (err) {
       this.onError("Could not initialize connection: " + err.message);
       return;
@@ -266,7 +299,12 @@ export class MultiplayerClient {
       this.conn = this.peer.connect(targetPeerId, { reliable: true });
 
       this.conn.on("open", () => {
-        this.conn.send({ type: "join_request", playerId });
+        this.conn.send({
+          type: "join_request",
+          playerId: safeUser.id,
+          username: safeUser.username,
+          user: safeUser,
+        });
       });
 
       this.conn.on("data", (data) => {
@@ -318,6 +356,30 @@ export class MultiplayerClient {
   handleP2PHostMessage(data) {
     if (!this.hostState) return;
 
+    if (data.type === "join_request") {
+      this.hostState.player2User = data.user || { id: data.playerId, username: data.username || "Player 2" };
+
+      // Send initial state to Guest
+      if (this.conn && this.conn.open) {
+        this.conn.send({
+          type: "room_joined",
+          roomId: this.hostState.roomId,
+          playerNum: 2,
+          playerId: "player2",
+          player1Username: this.hostState.player1User.username,
+          player2Username: this.hostState.player2User.username,
+          ownCard: [...this.hostState.player2Card],
+        });
+      }
+
+      setTimeout(() => {
+        this.broadcastP2PGameState();
+        this.onMessage({ type: "game_started" });
+        if (this.conn && this.conn.open) this.conn.send({ type: "game_started" });
+      }, 100);
+      return;
+    }
+
     if (data.type === "select_number") {
       this.handleP2PHostMove(2, data.number);
     } else if (data.type === "request_restart") {
@@ -358,6 +420,31 @@ export class MultiplayerClient {
       state.winner = "draw";
     }
 
+    // Persist match history upon completion
+    if (state.gameOver) {
+      const endedAt = new Date().toISOString();
+      recordOnlineMatch({
+        roomId: state.roomId,
+        player1Id: state.player1User?.id,
+        player2Id: state.player2User?.id,
+        player1Username: state.player1User?.username || "Player 1",
+        player2Username: state.player2User?.username || "Player 2",
+        winnerId:
+          state.winner === "player1"
+            ? state.player1User?.id
+            : state.winner === "player2"
+            ? state.player2User?.id
+            : null,
+        result: state.winner,
+        player1Lines: state.player1Lines,
+        player2Lines: state.player2Lines,
+        calledNumbers: [...state.calledNumbers],
+        lastCalledNumber: state.lastCalledNumber,
+        startedAt: state.startedAt,
+        endedAt,
+      });
+    }
+
     this.broadcastP2PGameState();
   }
 
@@ -384,7 +471,7 @@ export class MultiplayerClient {
     const hostCard = createShuffledCard();
     const guestCard = createShuffledCard();
     this.hostState = {
-      roomId: this.roomId,
+      ...this.hostState,
       player1Card: hostCard,
       player2Card: guestCard,
       calledNumbers: [],
@@ -396,6 +483,7 @@ export class MultiplayerClient {
       player2Lines: 0,
       p1Reset: false,
       p2Reset: false,
+      startedAt: new Date().toISOString(),
     };
 
     // Update host
@@ -405,6 +493,8 @@ export class MultiplayerClient {
       playerNum: 1,
       playerCount: 2,
       ownCard: hostCard,
+      player1Username: this.hostState.player1User?.username,
+      player2Username: this.hostState.player2User?.username,
     });
 
     // Update guest
@@ -414,6 +504,8 @@ export class MultiplayerClient {
         roomId: this.roomId,
         playerNum: 2,
         ownCard: guestCard,
+        player1Username: this.hostState.player1User?.username,
+        player2Username: this.hostState.player2User?.username,
       });
     }
 
@@ -428,12 +520,18 @@ export class MultiplayerClient {
     const clonedP1Card = [...state.player1Card];
     const clonedP2Card = [...state.player2Card];
 
+    const p1Name = state.player1User?.username || "Player 1";
+    const p2Name = state.player2User?.username || "Player 2";
+
     // Host View
     this.onMessage({
       type: "game_state",
       roomId: state.roomId,
       playerNum: 1,
       playerId: "player1",
+      player1Username: p1Name,
+      player2Username: p2Name,
+      opponentUsername: p2Name,
       ownCard: clonedP1Card,
       myCard: clonedP1Card,
       calledNumbers: clonedCalled,
@@ -456,6 +554,9 @@ export class MultiplayerClient {
         roomId: state.roomId,
         playerNum: 2,
         playerId: "player2",
+        player1Username: p1Name,
+        player2Username: p2Name,
+        opponentUsername: p1Name,
         ownCard: clonedP2Card,
         myCard: clonedP2Card,
         calledNumbers: clonedCalled,
@@ -475,61 +576,20 @@ export class MultiplayerClient {
 
   disconnect() {
     if (this.ws) {
-      try {
-        this.ws.close();
-      } catch {}
+      try { this.ws.close(); } catch {}
       this.ws = null;
     }
     if (this.conn) {
-      try {
-        this.conn.close();
-      } catch {}
+      try { this.conn.close(); } catch {}
       this.conn = null;
     }
     if (this.peer) {
-      try {
-        this.peer.destroy();
-      } catch {}
+      try { this.peer.destroy(); } catch {}
       this.peer = null;
     }
+    this.isHost = false;
+    this.hostState = null;
+    this.roomId = null;
     this.onStatusChange("disconnected");
   }
-}
-
-// Line calculation helper
-const LINE_DEFS = (() => {
-  const lines = [];
-  for (let r = 0; r < 5; r++) {
-    const l = [];
-    for (let c = 0; c < 5; c++) l.push(r * 5 + c);
-    lines.push(l);
-  }
-  for (let c = 0; c < 5; c++) {
-    const l = [];
-    for (let r = 0; r < 5; r++) l.push(r * 5 + c);
-    lines.push(l);
-  }
-  const d1 = [], d2 = [];
-  for (let i = 0; i < 5; i++) {
-    d1.push(i * 5 + i);
-    d2.push(i * 5 + (4 - i));
-  }
-  lines.push(d1, d2);
-  return lines;
-})();
-
-function countLines(card, calledSet) {
-  if (!card || card.length !== 25) return 0;
-  let count = 0;
-  for (const line of LINE_DEFS) {
-    let full = true;
-    for (const idx of line) {
-      if (!calledSet.has(card[idx])) {
-        full = false;
-        break;
-      }
-    }
-    if (full) count++;
-  }
-  return count;
 }

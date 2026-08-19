@@ -11,6 +11,8 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
+    "dotenv": "^17.4.2",
     "peerjs": "^1.5.5",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
