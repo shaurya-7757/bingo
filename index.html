@@ -4,8 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bingo</title>
-    <script type="module" crossorigin src="./assets/index-DZjYweci.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-1MpbiDoX.css">
+    <script>
+      (function() {
+        var savedTheme = localStorage.getItem("bingo_theme") || "light";
+        document.documentElement.setAttribute("data-theme", savedTheme);
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/index-ClbAwV5e.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C8P5mh7w.css">
   </head>
   <body>
     <div id="root"></div>
