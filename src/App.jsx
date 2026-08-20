@@ -417,6 +417,14 @@ export function App() {
     winRate: "0.0%",
   });
 
+  // Delete Account Modal State
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deletePasswordInput, setDeletePasswordInput] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteSuccess, setDeleteSuccess] = useState(false);
+
   const clientRef = useRef(null);
   const currentRoomIdRef = useRef("");
 
@@ -751,6 +759,64 @@ export function App() {
     setAuthUsername("");
     setAuthError("");
     setScreen("auth");
+  };
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText.trim() !== "DELETE") return;
+    setDeleteLoading(true);
+    setDeleteError("");
+
+    // 1. Online Game Safety: If inside an online game, cleanly disconnect & leave room first
+    if (gameMode === "online" || wsStatus === "connected" || roomId) {
+      if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+      if (aiWatchdogRef.current) clearTimeout(aiWatchdogRef.current);
+      setAiThinking(false);
+      disconnectMultiplayer();
+    }
+
+    try {
+      await authService.deleteAccount({
+        currentUser,
+        password: deletePasswordInput,
+      });
+
+      setDeleteSuccess(true);
+      setTimeout(() => {
+        // Clear all local React states
+        setCurrentUser(null);
+        setFriendsList([]);
+        setFriendRequests([]);
+        setMatchHistory([]);
+        setUserStats({
+          gamesPlayed: 0,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          onlineGames: 0,
+          onlineWins: 0,
+          onlineLosses: 0,
+          onlineDraws: 0,
+          winRate: "0.0%",
+        });
+        resetLocalGameState();
+        setShowDeleteModal(false);
+        setDeleteConfirmText("");
+        setDeletePasswordInput("");
+        setDeleteSuccess(false);
+        setDeleteLoading(false);
+        setAuthEmail("");
+        setAuthPassword("");
+        setAuthConfirmPassword("");
+        setAuthUsername("");
+        setAuthError("");
+        setAuthSuccess("ACCOUNT DELETED");
+        setAuthMode("signin");
+        setScreen("auth");
+      }, 1200);
+    } catch (err) {
+      setDeleteLoading(false);
+      setDeleteError(authService.formatAuthError(err) || "ACCOUNT DELETION FAILED. PLEASE TRY AGAIN.");
+    }
   };
 
   // Local Match Calculations
@@ -1398,6 +1464,11 @@ export function App() {
                 {currentUser?.isGuest ? "GUEST ACCOUNT" : "REGISTERED MEMBER"}
               </span>
               {currentUser?.email && <span className="profile-email">{currentUser.email}</span>}
+              {currentUser?.createdAt && (
+                <span className="profile-created-at">
+                  Joined: {new Date(currentUser.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1445,10 +1516,105 @@ export function App() {
             </div>
           </div>
 
+          <div className="stats-section-title">ACCOUNT</div>
+          <div className="profile-account-card">
+            <button className="btn btn-profile-signout" onClick={handleSignOut}>
+              SIGN OUT
+            </button>
+            <button
+              className="btn btn-delete-account"
+              onClick={() => {
+                setShowDeleteModal(true);
+                setDeleteError("");
+                setDeleteConfirmText("");
+                setDeletePasswordInput("");
+              }}
+            >
+              DELETE ACCOUNT
+            </button>
+          </div>
+
           <button className="btn btn-back" onClick={() => setScreen("main_menu")}>
             BACK TO MENU
           </button>
         </div>
+
+        {/* --- DELETE ACCOUNT CONFIRMATION MODAL --- */}
+        {showDeleteModal && (
+          <div className="modal-overlay">
+            <div className="delete-modal-card">
+              <div className="delete-modal-header">
+                <h3 className="delete-modal-title">DELETE ACCOUNT</h3>
+              </div>
+
+              <p className="delete-modal-warning">
+                Are you sure you want to permanently delete your account?
+              </p>
+
+              <div className="delete-items-box">
+                <span className="delete-items-heading">This action will permanently remove:</span>
+                <ul className="delete-items-list">
+                  <li>Your user account and profile</li>
+                  <li>Your friends and incoming friend requests</li>
+                  <li>Your online match history</li>
+                  <li>Your online win/loss/draw statistics</li>
+                </ul>
+                <div className="delete-irreversible-warning">
+                  This action cannot be undone.
+                </div>
+              </div>
+
+              {deleteError && <div className="auth-alert error">{deleteError}</div>}
+              {deleteSuccess && <div className="auth-alert success">ACCOUNT DELETED. REDIRECTING...</div>}
+
+              {!currentUser?.isGuest && (
+                <div className="form-group delete-input-group">
+                  <label className="form-label">CONFIRM PASSWORD (OPTIONAL)</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    placeholder="Enter password to verify identity"
+                    value={deletePasswordInput}
+                    onChange={(e) => setDeletePasswordInput(e.target.value)}
+                    disabled={deleteLoading || deleteSuccess}
+                  />
+                </div>
+              )}
+
+              <div className="form-group delete-input-group">
+                <label className="form-label">Type DELETE to confirm:</label>
+                <input
+                  type="text"
+                  className="form-input delete-type-input"
+                  placeholder="Type DELETE"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  disabled={deleteLoading || deleteSuccess}
+                  autoFocus
+                />
+              </div>
+
+              <div className="delete-modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-modal-cancel"
+                  onClick={() => setShowDeleteModal(false)}
+                  disabled={deleteLoading || deleteSuccess}
+                >
+                  CANCEL
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-modal-delete-confirm"
+                  onClick={handleDeleteAccount}
+                  disabled={deleteConfirmText.trim() !== "DELETE" || deleteLoading || deleteSuccess}
+                >
+                  {deleteLoading ? "DELETING ACCOUNT..." : "DELETE ACCOUNT"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

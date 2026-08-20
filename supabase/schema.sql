@@ -186,3 +186,53 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- ==============================================================================
+-- SECURE ACCOUNT DELETION FUNCTION
+-- Authenticated users can permanently delete their own account and cascade data
+-- ==============================================================================
+
+CREATE OR REPLACE FUNCTION public.delete_user_account() 
+RETURNS void AS $$
+DECLARE
+  current_user_id UUID;
+BEGIN
+  -- Extract caller's authenticated user ID
+  current_user_id := auth.uid();
+  IF current_user_id IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  -- 1. Anonymize user reference in shared online match history (preserves opponent's record)
+  UPDATE public.online_matches
+  SET player1_id = NULL
+  WHERE player1_id = current_user_id;
+
+  UPDATE public.online_matches
+  SET player2_id = NULL
+  WHERE player2_id = current_user_id;
+
+  UPDATE public.online_matches
+  SET winner_id = NULL
+  WHERE winner_id = current_user_id;
+
+  -- 2. Delete all friendships and friend requests
+  DELETE FROM public.friends
+  WHERE user_id = current_user_id OR friend_id = current_user_id;
+
+  DELETE FROM public.friend_requests
+  WHERE sender_id = current_user_id OR receiver_id = current_user_id;
+
+  -- 3. Delete profile
+  DELETE FROM public.profiles
+  WHERE id = current_user_id;
+
+  -- 4. Delete auth user record permanently
+  DELETE FROM auth.users
+  WHERE id = current_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+REVOKE EXECUTE ON FUNCTION public.delete_user_account() FROM public;
+GRANT EXECUTE ON FUNCTION public.delete_user_account() TO authenticated;
+

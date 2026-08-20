@@ -807,6 +807,196 @@ body {
 [data-theme="dark"] .stat-value.loss-color { color: #f87171; }
 [data-theme="dark"] .stat-value.draw-color { color: #facc15; }
 
+.profile-created-at {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.profile-account-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface-card);
+  border: 2px solid var(--border);
+  border-radius: 18px;
+  padding: 20px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-profile-signout {
+  width: 100%;
+  height: 50px;
+  background: var(--surface-secondary);
+  border: 2px solid var(--border);
+  color: var(--text);
+  border-radius: 14px;
+  font-size: 0.98rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-profile-signout:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+
+.btn-delete-account {
+  width: 100%;
+  height: 50px;
+  background: var(--status-loss-bg);
+  border: 2px solid var(--status-loss-border);
+  color: var(--status-loss-text);
+  border-radius: 14px;
+  font-size: 0.98rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-delete-account:hover {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #dc2626;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35);
+}
+
+/* ==============================================================================
+   DELETE ACCOUNT CONFIRMATION MODAL
+   ============================================================================== */
+.delete-modal-card {
+  background: var(--surface-card);
+  border: 2px solid var(--status-loss-border);
+  border-radius: 24px;
+  padding: 34px 28px;
+  width: 100%;
+  max-width: 500px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.4);
+  text-align: left;
+  animation: modalScaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.delete-modal-header {
+  margin-bottom: 14px;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.delete-modal-title {
+  font-size: 1.5rem;
+  font-weight: 900;
+  color: #ef4444;
+  letter-spacing: 0.8px;
+  margin: 0;
+}
+
+.delete-modal-warning {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 16px;
+  line-height: 1.4;
+}
+
+.delete-items-box {
+  background: var(--status-loss-bg);
+  border: 1.5px solid var(--status-loss-border);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+}
+
+.delete-items-heading {
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--status-loss-text);
+  display: block;
+  margin-bottom: 8px;
+}
+
+.delete-items-list {
+  margin: 0 0 10px 0;
+  padding-left: 20px;
+  color: var(--status-loss-text);
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.delete-irreversible-warning {
+  font-size: 0.82rem;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  color: #ef4444;
+  text-transform: uppercase;
+}
+
+.delete-input-group {
+  margin-bottom: 18px;
+}
+
+.delete-type-input {
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.delete-modal-actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.btn-modal-cancel {
+  flex: 1;
+  height: 52px;
+  background: var(--surface-secondary);
+  border: 2px solid var(--border);
+  color: var(--text);
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-modal-cancel:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+
+.btn-modal-delete-confirm {
+  flex: 1.2;
+  height: 52px;
+  background: #dc2626;
+  border: none;
+  color: #ffffff;
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.35);
+  transition: all 0.2s ease;
+}
+
+.btn-modal-delete-confirm:hover:not(:disabled) {
+  background: #b91c1c;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(220, 38, 38, 0.45);
+}
+
+.btn-modal-delete-confirm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
 /* ==============================================================================
    FRIENDS SYSTEM UI (ENLARGED & ROBUST)
    ============================================================================== */
