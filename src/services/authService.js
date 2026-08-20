@@ -312,19 +312,42 @@ export async function getCurrentUser() {
 export function subscribeToAuthChanges(callback) {
   if (isSupabaseConfigured) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === "SIGNED_IN" && session?.user) {
+      if (
+        session?.user &&
+        (event === "SIGNED_IN" ||
+          event === "INITIAL_SESSION" ||
+          event === "TOKEN_REFRESHED" ||
+          event === "USER_UPDATED")
+      ) {
         const user = session.user;
-        const { data: profileData } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", user.id)
-          .maybeSingle();
+        let profileData = null;
+        try {
+          const res = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", user.id)
+            .maybeSingle();
+          profileData = res.data;
+        } catch {}
 
         const username =
           profileData?.username ||
           user.user_metadata?.username ||
           user.email?.split("@")[0] ||
           "Player";
+
+        // Auto-heal/create profile record if missing without signing out
+        if (!profileData) {
+          try {
+            await supabase.from("profiles").upsert({
+              id: user.id,
+              username,
+              display_name: username,
+              online_status: "online",
+              last_seen: new Date().toISOString(),
+            });
+          } catch {}
+        }
 
         const profile = {
           id: user.id,
@@ -335,10 +358,10 @@ export function subscribeToAuthChanges(callback) {
           createdAt: profileData?.created_at || user.created_at || new Date().toISOString(),
         };
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
-        callback(profile);
+        callback(profile, event);
       } else if (event === "SIGNED_OUT") {
         localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
-        callback(null);
+        callback(null, event);
       }
     });
 
