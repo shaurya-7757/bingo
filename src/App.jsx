@@ -1149,31 +1149,17 @@ export function App() {
         </div>
 
         <h1 className="title">BINGO</h1>
-        <p className="subtitle">Real-time Multiplayer & Match Tracking</p>
 
-        <div className="auth-card">
-          <div className="auth-tabs">
-            <button
-              className={`auth-tab-btn ${authMode === "signin" ? "active" : ""}`}
-              onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
-            >
-              SIGN IN
-            </button>
-            <button
-              className={`auth-tab-btn ${authMode === "signup" ? "active" : ""}`}
-              onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthSuccess(""); }}
-            >
-              SIGN UP
-            </button>
-          </div>
+        {authMode === "signin" && (
+          <div className="auth-card">
+            <h2 className="auth-heading">WELCOME BACK</h2>
 
-          {authError && <div className="auth-alert error">{authError}</div>}
-          {authSuccess && <div className="auth-alert success">{authSuccess}</div>}
+            {authError && <div className="auth-alert error">{authError}</div>}
+            {authSuccess && <div className="auth-alert success">{authSuccess}</div>}
 
-          {authMode === "signin" && (
             <form className="auth-form" onSubmit={handleSignInSubmit}>
               <div className="form-group">
-                <label className="form-label">EMAIL</label>
+                <label className="form-label">Email</label>
                 <input
                   type="email"
                   className="form-input"
@@ -1184,7 +1170,7 @@ export function App() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">PASSWORD</label>
+                <label className="form-label">Password</label>
                 <input
                   type="password"
                   className="form-input"
@@ -1197,16 +1183,51 @@ export function App() {
               <button type="submit" className="btn btn-auth-primary" disabled={authLoading}>
                 {authLoading ? "SIGNING IN..." : "SIGN IN"}
               </button>
-              <button type="button" className="btn-link" onClick={handleForgotPassword} disabled={authLoading}>
-                FORGOT PASSWORD
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthSuccess(""); }}
+                disabled={authLoading}
+              >
+                FORGOT PASSWORD?
               </button>
             </form>
-          )}
 
-          {authMode === "signup" && (
+            <div className="auth-divider">
+              <span>OR</span>
+            </div>
+
+            <div className="auth-secondary-actions">
+              <button
+                type="button"
+                className="btn btn-secondary-auth"
+                onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthSuccess(""); }}
+                disabled={authLoading}
+              >
+                CREATE ACCOUNT
+              </button>
+              <button
+                type="button"
+                className="btn btn-guest"
+                onClick={handlePlayAsGuest}
+                disabled={authLoading}
+              >
+                CONTINUE AS GUEST
+              </button>
+            </div>
+          </div>
+        )}
+
+        {authMode === "signup" && (
+          <div className="auth-card">
+            <h2 className="auth-heading">CREATE ACCOUNT</h2>
+
+            {authError && <div className="auth-alert error">{authError}</div>}
+            {authSuccess && <div className="auth-alert success">{authSuccess}</div>}
+
             <form className="auth-form" onSubmit={handleSignUpSubmit}>
               <div className="form-group">
-                <label className="form-label">USERNAME</label>
+                <label className="form-label">Username</label>
                 <input
                   type="text"
                   className="form-input"
@@ -1217,7 +1238,7 @@ export function App() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">EMAIL</label>
+                <label className="form-label">Email</label>
                 <input
                   type="email"
                   className="form-input"
@@ -1228,22 +1249,22 @@ export function App() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">PASSWORD</label>
+                <label className="form-label">Password</label>
                 <input
                   type="password"
                   className="form-input"
-                  placeholder="Create a secure password (min 6 chars)"
+                  placeholder="Create password (min 6 characters)"
                   value={authPassword}
                   onChange={(e) => setAuthPassword(e.target.value)}
                   required
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">CONFIRM PASSWORD</label>
+                <label className="form-label">Confirm Password</label>
                 <input
                   type="password"
                   className="form-input"
-                  placeholder="Re-enter your password"
+                  placeholder="Confirm your password"
                   value={authConfirmPassword}
                   onChange={(e) => setAuthConfirmPassword(e.target.value)}
                   required
@@ -1252,20 +1273,52 @@ export function App() {
               <button type="submit" className="btn btn-auth-primary" disabled={authLoading}>
                 {authLoading ? "CREATING ACCOUNT..." : "SIGN UP"}
               </button>
+              <button
+                type="button"
+                className="btn btn-secondary-auth"
+                onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
+                disabled={authLoading}
+              >
+                BACK TO SIGN IN
+              </button>
             </form>
-          )}
-
-          <div className="auth-divider">
-            <span>OR</span>
           </div>
+        )}
 
-          <button className="btn btn-guest" onClick={handlePlayAsGuest} disabled={authLoading}>
-            PLAY AS GUEST
-          </button>
-          <div className="guest-note">
-            Guest mode lets you play immediately. Online stats and friendships are preserved permanently for registered accounts.
+        {authMode === "forgot" && (
+          <div className="auth-card">
+            <h2 className="auth-heading">RESET PASSWORD</h2>
+            <p className="auth-subtext">Enter your email address to receive password reset instructions.</p>
+
+            {authError && <div className="auth-alert error">{authError}</div>}
+            {authSuccess && <div className="auth-alert success">{authSuccess}</div>}
+
+            <form className="auth-form" onSubmit={(e) => { e.preventDefault(); handleForgotPassword(); }}>
+              <div className="form-group">
+                <label className="form-label">Email</label>
+                <input
+                  type="email"
+                  className="form-input"
+                  placeholder="Enter your registered email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <button type="submit" className="btn btn-auth-primary" disabled={authLoading}>
+                {authLoading ? "SENDING..." : "SEND RESET INSTRUCTIONS"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary-auth"
+                onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
+                disabled={authLoading}
+              >
+                BACK TO SIGN IN
+              </button>
+            </form>
           </div>
-        </div>
+        )}
       </div>
     );
   }

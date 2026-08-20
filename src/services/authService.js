@@ -9,28 +9,46 @@ const LOCAL_STORAGE_GUEST_NAME_KEY = "bingo_guest_name";
  * Format auth errors into clean, user-friendly messages without exposing raw database details.
  */
 export function formatAuthError(error) {
-  if (!error) return "An unexpected error occurred.";
+  if (!error) return "AUTHENTICATION ERROR";
   const msg = error.message || String(error);
-  if (msg.includes("Invalid login credentials") || msg.includes("invalid_credentials") || msg.includes("Invalid email or password")) {
+  if (
+    msg.includes("Invalid login credentials") ||
+    msg.includes("invalid_credentials") ||
+    msg.includes("Invalid email or password") ||
+    msg.includes("wrong password")
+  ) {
     return "INVALID EMAIL OR PASSWORD";
   }
-  if (msg.includes("User already registered") || msg.includes("already exists") || msg.includes("already registered")) {
+  if (
+    msg.includes("User already registered") ||
+    msg.includes("already exists") ||
+    msg.includes("already registered")
+  ) {
     return "AN ACCOUNT WITH THIS EMAIL ALREADY EXISTS. PLEASE SIGN IN.";
   }
   if (msg.includes("Username already taken")) {
     return "USERNAME ALREADY TAKEN. PLEASE CHOOSE ANOTHER.";
   }
-  if (msg.includes("Password should be at least")) {
+  if (msg.includes("Password should be at least") || msg.includes("weak_password") || msg.includes("weak password")) {
     return "PASSWORD MUST BE AT LEAST 6 CHARACTERS.";
   }
-  if (msg.includes("valid email") || msg.includes("invalid email")) {
+  if (msg.includes("valid email") || msg.includes("invalid email") || msg.includes("Unable to validate email address")) {
     return "PLEASE ENTER A VALID EMAIL ADDRESS.";
   }
-  if (msg.includes("Account not found") || msg.includes("ACCOUNT NOT FOUND")) {
+  if (msg.includes("Account not found") || msg.includes("ACCOUNT NOT FOUND") || msg.includes("User not found")) {
     return "ACCOUNT NOT FOUND. PLEASE CHECK YOUR EMAIL OR SIGN UP.";
   }
-  if (msg.includes("rate limit") || msg.includes("over_email_send_rate_limit")) {
+  if (msg.includes("rate limit") || msg.includes("over_email_send_rate_limit") || msg.includes("too many requests")) {
     return "TOO MANY ATTEMPTS. PLEASE WAIT A MOMENT AND TRY AGAIN.";
+  }
+  if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("fetch failed") || msg.includes("network")) {
+    return "NETWORK CONNECTION ERROR. PLEASE CHECK YOUR CONNECTION.";
+  }
+  if (msg.includes("JWT") || msg.includes("token expired") || msg.includes("session expired")) {
+    return "SESSION EXPIRED. PLEASE SIGN IN AGAIN.";
+  }
+  if (msg.includes("Email not confirmed")) {
+    return "PLEASE CONFIRM YOUR EMAIL BEFORE SIGNING IN.";
   }
   return msg.toUpperCase();
 }
