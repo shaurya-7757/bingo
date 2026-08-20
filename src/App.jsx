@@ -1495,7 +1495,7 @@ export function App() {
                   placeholder="Enter your email"
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
-                  autoComplete="email"
+                  autoComplete="username"
                   required
                 />
               </div>
