@@ -187,30 +187,103 @@ wss.on("connection", (ws) => {
         return;
       }
 
-      if (type === "friend_invite") {
+      // Friend Game Invitation Relay & Management
+      if (type === "friend_invite" || type === "invite_friend") {
         const target = connectedUsers.get(data.targetUserId);
-        if (target && target.ws.readyState === WebSocket.OPEN) {
-          send(target.ws, {
-            type: "friend_invite_received",
-            inviterId: data.inviterId,
-            inviterUsername: data.inviterUsername,
-            roomId: data.roomId,
+        if (!target || target.ws.readyState !== WebSocket.OPEN) {
+          send(ws, {
+            type: "invitation_error",
+            message: `${data.targetUsername || "Friend"} is currently offline.`,
           });
-        } else {
-          send(ws, { type: "error", message: "Friend is currently offline." });
+          return;
+        }
+
+        // Check if target is already in an active game
+        let inGame = false;
+        for (const r of rooms.values()) {
+          if (
+            (r.player1?.id === data.targetUserId || r.player2?.id === data.targetUserId) &&
+            r.gameStatus === "in_progress"
+          ) {
+            inGame = true;
+            break;
+          }
+        }
+
+        if (inGame) {
+          send(ws, {
+            type: "invitation_error",
+            message: `${data.targetUsername || "Friend"} is currently in a game.`,
+          });
+          return;
+        }
+
+        const invitationId = "inv_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+        const expiresAt = new Date(Date.now() + 90000).toISOString();
+
+        send(target.ws, {
+          type: "friend_invite_received",
+          invitationId,
+          inviterId: data.inviterId,
+          inviterUsername: data.inviterUsername || "A friend",
+          roomId: data.roomId,
+          expiresAt,
+        });
+
+        send(ws, {
+          type: "invitation_sent",
+          invitationId,
+          roomId: data.roomId,
+          targetUserId: data.targetUserId,
+          targetUsername: data.targetUsername,
+          expiresAt,
+        });
+        return;
+      }
+
+      if (type === "accept_invite" || type === "accept_game_invitation") {
+        const inviter = connectedUsers.get(data.inviterId);
+        if (inviter && inviter.ws.readyState === WebSocket.OPEN) {
+          send(inviter.ws, {
+            type: "invitation_accepted",
+            roomId: data.roomId,
+            respondentUsername: data.username || data.respondentUsername || "Friend",
+          });
         }
         return;
       }
 
-      if (type === "friend_invite_response") {
+      if (type === "deny_invite" || type === "deny_game_invitation") {
         const inviter = connectedUsers.get(data.inviterId);
         if (inviter && inviter.ws.readyState === WebSocket.OPEN) {
           send(inviter.ws, {
-            type: "friend_invite_response",
-            accept: data.accept,
+            type: "invitation_declined",
             roomId: data.roomId,
-            respondentUsername: data.respondentUsername,
+            respondentUsername: data.username || data.respondentUsername || "Friend",
           });
+        }
+        if (data.roomId && rooms.has(data.roomId)) {
+          const room = rooms.get(data.roomId);
+          if (room && !room.player2 && room.gameStatus === "waiting") {
+            rooms.delete(data.roomId);
+          }
+        }
+        return;
+      }
+
+      if (type === "cancel_invite" || type === "cancel_game_invitation") {
+        if (data.targetUserId) {
+          const target = connectedUsers.get(data.targetUserId);
+          if (target && target.ws.readyState === WebSocket.OPEN) {
+            send(target.ws, {
+              type: "invitation_cancelled",
+              roomId: data.roomId,
+              inviterUsername: data.inviterUsername,
+            });
+          }
+        }
+        if (data.roomId && rooms.has(data.roomId)) {
+          rooms.delete(data.roomId);
         }
         return;
       }

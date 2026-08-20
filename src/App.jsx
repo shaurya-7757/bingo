@@ -403,8 +403,10 @@ export function App() {
   const [loadingPublicProfile, setLoadingPublicProfile] = useState(false);
   const [friendToRemove, setFriendToRemove] = useState(null);
 
-  // Incoming Real-time Game Invite Modal
+  // Incoming & Outgoing Real-time Game Invite State
   const [incomingInvite, setIncomingInvite] = useState(null);
+  const [activeOutgoingInvite, setActiveOutgoingInvite] = useState(null);
+  const [inviteCountdown, setInviteCountdown] = useState(90);
 
   // Match History & Profile State
   const [matchHistory, setMatchHistory] = useState([]);
@@ -500,6 +502,45 @@ export function App() {
       refreshStats();
     }
   }, [currentUser, screen, refreshStats]);
+
+  // Real-time user presence registration on WebSocket connection
+  useEffect(() => {
+    if (currentUser && !currentUser.isGuest) {
+      const client = getClient();
+      client.connect(() => {
+        if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+          client.ws.send(
+            JSON.stringify({
+              type: "register_user",
+              userId: currentUser.id,
+              username: currentUser.username,
+            })
+          );
+        }
+      });
+    }
+  }, [currentUser]);
+
+  // Countdown timer for active outgoing game invitation
+  useEffect(() => {
+    let interval = null;
+    if (activeOutgoingInvite && activeOutgoingInvite.status === "waiting") {
+      setInviteCountdown(90);
+      interval = setInterval(() => {
+        setInviteCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            setActiveOutgoingInvite((curr) => (curr ? { ...curr, status: "expired" } : null));
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [activeOutgoingInvite?.roomId, activeOutgoingInvite?.status]);
 
   // Handle Multiplayer Messages
   const handleMultiplayerMessage = useCallback((data) => {
@@ -605,6 +646,57 @@ export function App() {
         setOnlinePlayerCount(data.playerCount || 1);
         setOnlineLobbyView("waiting");
       }
+      return;
+    }
+
+    if (data.type === "friend_invite_received" || data.type === "game_invitation") {
+      setIncomingInvite({
+        invitationId: data.invitationId,
+        inviterId: data.inviterId,
+        inviterUsername: data.inviterUsername,
+        roomId: data.roomId,
+        expiresAt: data.expiresAt,
+      });
+      return;
+    }
+
+    if (data.type === "invitation_sent") {
+      setActiveOutgoingInvite((prev) =>
+        prev ? { ...prev, invitationId: data.invitationId, status: "waiting" } : prev
+      );
+      return;
+    }
+
+    if (data.type === "invitation_accepted") {
+      setActiveOutgoingInvite((prev) => (prev ? { ...prev, status: "accepted" } : prev));
+      return;
+    }
+
+    if (data.type === "invitation_declined") {
+      setActiveOutgoingInvite((prev) => (prev ? { ...prev, status: "declined" } : prev));
+      return;
+    }
+
+    if (data.type === "invitation_cancelled") {
+      setIncomingInvite((prev) =>
+        prev && (prev.roomId === data.roomId || prev.invitationId === data.invitationId) ? null : prev
+      );
+      return;
+    }
+
+    if (data.type === "invitation_expired") {
+      setIncomingInvite((prev) =>
+        prev && (prev.roomId === data.roomId || prev.invitationId === data.invitationId) ? null : prev
+      );
+      setActiveOutgoingInvite((prev) =>
+        prev && prev.roomId === data.roomId ? { ...prev, status: "expired" } : prev
+      );
+      return;
+    }
+
+    if (data.type === "invitation_error") {
+      setActiveOutgoingInvite((prev) => (prev ? { ...prev, status: "error", errorMessage: data.message } : prev));
+      setOnlineError(data.message);
       return;
     }
 
@@ -1157,40 +1249,119 @@ export function App() {
   };
 
   const handleInviteFriendToGame = (friend) => {
-    if (friend.onlineStatus === "in_game") {
-      setFriendActionError("USER IS CURRENTLY IN A GAME");
+    if (friend.onlineStatus === "offline") {
+      setFriendActionError(`${friend.displayName || friend.username} is offline.`);
       return;
     }
+    if (friend.onlineStatus === "in_game") {
+      setFriendActionError(`${friend.displayName || friend.username} is currently in a game.`);
+      return;
+    }
+
     setGameMode("online");
+    setOnlineError("");
     const client = getClient();
+    client.connect();
+
+    // Create room
     client.createRoom(currentUser);
-    setTimeout(() => {
-      if (client.roomId && client.ws && client.ws.readyState === WebSocket.OPEN) {
+
+    // Initial state for host waiting screen
+    setActiveOutgoingInvite({
+      friend,
+      roomId: "",
+      status: "waiting",
+      expiresIn: 90,
+    });
+
+    setScreen("invite_waiting");
+
+    // Once room ID is generated, send invite packet
+    const checkRoomInterval = setInterval(() => {
+      if (client.roomId) {
+        clearInterval(checkRoomInterval);
+        setActiveOutgoingInvite((prev) => (prev ? { ...prev, roomId: client.roomId } : prev));
+
+        if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+          client.ws.send(
+            JSON.stringify({
+              type: "friend_invite",
+              targetUserId: friend.id,
+              targetUsername: friend.displayName || friend.username,
+              inviterId: currentUser.id,
+              inviterUsername: currentUser.username,
+              roomId: client.roomId,
+            })
+          );
+        }
+      }
+    }, 100);
+
+    setTimeout(() => clearInterval(checkRoomInterval), 6000);
+  };
+
+  const handleCancelOutgoingInvite = () => {
+    if (activeOutgoingInvite) {
+      const client = getClient();
+      if (client.ws && client.ws.readyState === WebSocket.OPEN && activeOutgoingInvite.friend) {
         client.ws.send(
           JSON.stringify({
-            type: "friend_invite",
-            targetUserId: friend.id,
-            inviterId: currentUser.id,
-            inviterUsername: currentUser.username,
-            roomId: client.roomId,
+            type: "cancel_invite",
+            roomId: activeOutgoingInvite.roomId || roomId,
+            targetUserId: activeOutgoingInvite.friend.id,
+            inviterUsername: currentUser?.username,
           })
         );
       }
-    }, 400);
-    setScreen("online_lobby");
-    setOnlineLobbyView("waiting");
+      disconnectMultiplayer();
+      setActiveOutgoingInvite(null);
+    }
+    setScreen("friends");
   };
 
   const handleAcceptInvite = () => {
     if (!incomingInvite) return;
     const roomCode = incomingInvite.roomId;
+    const inviterId = incomingInvite.inviterId;
+    const invitationId = incomingInvite.invitationId;
     setIncomingInvite(null);
     setGameMode("online");
+
     const client = getClient();
-    client.joinRoom(roomCode, currentUser);
+    client.connect(() => {
+      if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(
+          JSON.stringify({
+            type: "accept_invite",
+            invitationId,
+            inviterId,
+            roomId: roomCode,
+            username: currentUser?.username,
+          })
+        );
+      }
+      client.joinRoom(roomCode, currentUser);
+    });
   };
 
-  const handleDeclineInvite = () => {
+  const handleDenyInvite = () => {
+    if (!incomingInvite) return;
+    const roomCode = incomingInvite.roomId;
+    const inviterId = incomingInvite.inviterId;
+    const invitationId = incomingInvite.invitationId;
+
+    const client = getClient();
+    if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(
+        JSON.stringify({
+          type: "deny_invite",
+          invitationId,
+          inviterId,
+          roomId: roomCode,
+          username: currentUser?.username,
+        })
+      );
+    }
     setIncomingInvite(null);
   };
 
@@ -1257,6 +1428,30 @@ export function App() {
 
   const wsStatusLabel = wsStatus === "connecting" ? "CONNECTING" : wsStatus === "connected" ? "CONNECTED" : "DISCONNECTED";
   const wsStatusClass = wsStatus === "connecting" ? "conn-connecting" : wsStatus === "connected" ? "conn-online" : "conn-offline";
+
+  const renderGlobalInviteModal = () => {
+    if (!incomingInvite) return null;
+    return (
+      <div className="modal-overlay">
+        <div className="game-invite-modal-card">
+          <div className="game-invite-modal-header">
+            <h3 className="game-invite-modal-title">GAME INVITATION</h3>
+          </div>
+          <p className="game-invite-modal-desc">
+            <strong>{incomingInvite.inviterUsername || "A friend"}</strong> invited you to play Bingo.
+          </p>
+          <div className="game-invite-modal-actions">
+            <button type="button" className="btn btn-modal-accept" onClick={handleAcceptInvite}>
+              ACCEPT
+            </button>
+            <button type="button" className="btn btn-modal-deny" onClick={handleDenyInvite}>
+              DENY
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // --- SCREEN 0: LOADING ACCOUNT STATE (Prevents flash of login screen) ---
   if (authChecking) {
@@ -1503,6 +1698,8 @@ export function App() {
         <button className="btn btn-signout" onClick={handleSignOut}>
           SIGN OUT
         </button>
+
+        {renderGlobalInviteModal()}
       </div>
     );
   }
@@ -1680,6 +1877,7 @@ export function App() {
             </div>
           </div>
         )}
+        {renderGlobalInviteModal()}
       </div>
     );
   }
@@ -2138,6 +2336,7 @@ export function App() {
             </div>
           </div>
         )}
+        {renderGlobalInviteModal()}
       </div>
     );
   }
@@ -2235,6 +2434,7 @@ export function App() {
             </div>
           </div>
         )}
+        {renderGlobalInviteModal()}
       </div>
     );
   }
@@ -2266,6 +2466,106 @@ export function App() {
         <button className="btn btn-back" onClick={() => setScreen("main_menu")}>
           BACK TO MENU
         </button>
+        {renderGlobalInviteModal()}
+      </div>
+    );
+  }
+
+  // --- SCREEN: HOST WAITING FOR FRIEND INVITATION RESPONSE ---
+  if (screen === "invite_waiting") {
+    const friendName = activeOutgoingInvite?.friend?.displayName || activeOutgoingInvite?.friend?.username || "Friend";
+    const status = activeOutgoingInvite?.status || "waiting";
+
+    return (
+      <div className="bingo-app mode-selection-page">
+        <div className="top-header-bar">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+        </div>
+
+        <h1 className="title">BINGO</h1>
+        <p className="subtitle">GAME INVITATION</p>
+
+        <div className="online-waiting-panel">
+          <div className="waiting-card">
+            <div className="invite-waiting-top">
+              <div className="friend-avatar-circle large-avatar">
+                {friendName.charAt(0).toUpperCase()}
+              </div>
+              <div className="invite-waiting-details">
+                <div className="invite-waiting-sublabel">INVITED PLAYER</div>
+                <h2 className="invite-waiting-username">{friendName}</h2>
+              </div>
+            </div>
+
+            {status === "waiting" && (
+              <>
+                <div className="invite-status-banner waiting-pulse">
+                  STATUS: WAITING FOR RESPONSE
+                </div>
+                <div className="invite-countdown-badge">
+                  Expires in: {inviteCountdown}s
+                </div>
+                {activeOutgoingInvite?.roomId && (
+                  <div className="invite-room-code-tag">
+                    Room Code: <strong>{activeOutgoingInvite.roomId}</strong>
+                  </div>
+                )}
+                <div className="invite-waiting-actions">
+                  <button className="btn btn-cancel-invite" onClick={handleCancelOutgoingInvite}>
+                    CANCEL INVITATION
+                  </button>
+                  <button className="btn btn-leave-lobby" onClick={handleCancelOutgoingInvite}>
+                    LEAVE
+                  </button>
+                </div>
+              </>
+            )}
+
+            {status === "accepted" && (
+              <div className="invite-status-box success">
+                <div className="invite-status-title">{friendName.toUpperCase()} ACCEPTED!</div>
+                <div className="invite-status-desc">GAME STARTING...</div>
+              </div>
+            )}
+
+            {status === "declined" && (
+              <div className="invite-status-box declined">
+                <div className="invite-status-title">INVITATION DECLINED</div>
+                <div className="invite-status-desc">{friendName} declined your game invitation.</div>
+                <div className="invite-waiting-actions single-action">
+                  <button className="btn btn-back-full" onClick={() => { setActiveOutgoingInvite(null); setScreen("friends"); }}>
+                    BACK TO FRIENDS
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {status === "expired" && (
+              <div className="invite-status-box expired">
+                <div className="invite-status-title">INVITATION EXPIRED</div>
+                <div className="invite-status-desc">The invitation timed out with no response.</div>
+                <div className="invite-waiting-actions single-action">
+                  <button className="btn btn-back-full" onClick={() => { setActiveOutgoingInvite(null); setScreen("friends"); }}>
+                    BACK TO FRIENDS
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {status === "error" && (
+              <div className="invite-status-box error">
+                <div className="invite-status-title">INVITATION ERROR</div>
+                <div className="invite-status-desc">{activeOutgoingInvite?.errorMessage || "Could not deliver invitation."}</div>
+                <div className="invite-waiting-actions single-action">
+                  <button className="btn btn-back-full" onClick={() => { setActiveOutgoingInvite(null); setScreen("friends"); }}>
+                    BACK TO FRIENDS
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        {renderGlobalInviteModal()}
       </div>
     );
   }
@@ -2362,6 +2662,7 @@ export function App() {
             </div>
           </div>
         )}
+        {renderGlobalInviteModal()}
       </div>
     );
   }
@@ -2575,25 +2876,7 @@ export function App() {
         )}
       </div>
 
-      {/* Real-time Friend Game Invitation Modal */}
-      {incomingInvite && (
-        <div className="invite-modal-overlay">
-          <div className="invite-modal-card">
-            <h3 className="invite-modal-title">GAME INVITATION</h3>
-            <p className="invite-modal-desc">
-              <strong>{incomingInvite.inviterUsername}</strong> has invited you to play Bingo!
-            </p>
-            <div className="invite-modal-actions">
-              <button className="btn btn-accept" onClick={handleAcceptInvite}>
-                ACCEPT
-              </button>
-              <button className="btn btn-decline" onClick={handleDeclineInvite}>
-                DECLINE
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {renderGlobalInviteModal()}
     </div>
   );
 }

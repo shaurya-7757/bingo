@@ -2295,16 +2295,239 @@ body {
   line-height: 1.45;
 }
 
-.invite-modal-actions {
-  display: flex;
-  gap: 14px;
-  justify-content: center;
+/* ==============================================================================
+   GAME INVITATION MODAL & HOST WAITING SCREEN
+   ============================================================================== */
+.game-invite-modal-card {
+  background: var(--surface-card);
+  border: 2px solid var(--border);
+  border-radius: 24px;
+  padding: 34px 28px;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
+  text-align: center;
+  animation: modalScaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.invite-modal-actions .btn-accept,
-.invite-modal-actions .btn-decline {
-  padding: 12px 28px;
+.game-invite-modal-header {
+  margin-bottom: 16px;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.game-invite-modal-title {
+  font-size: 1.5rem;
+  font-weight: 900;
+  color: var(--primary);
+  letter-spacing: 0.8px;
+  margin: 0;
+}
+
+.game-invite-modal-desc {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.game-invite-modal-actions {
+  display: flex;
+  gap: 14px;
+}
+
+.btn-modal-accept {
+  flex: 1.2;
+  height: 52px;
+  background: var(--status-win-bg);
+  color: var(--status-win-text);
+  border: 2px solid var(--status-win-border);
+  border-radius: 14px;
   font-size: 1.05rem;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-modal-accept:hover {
+  background: #16a34a;
+  color: #ffffff;
+  border-color: #15803d;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(22, 163, 74, 0.35);
+}
+
+.btn-modal-deny {
+  flex: 1;
+  height: 52px;
+  background: var(--status-loss-bg);
+  color: var(--status-loss-text);
+  border: 2px solid var(--status-loss-border);
+  border-radius: 14px;
+  font-size: 1.05rem;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-modal-deny:hover {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #b91c1c;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(220, 38, 38, 0.35);
+}
+
+.invite-waiting-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+.large-avatar {
+  width: 58px;
+  height: 58px;
+  font-size: 1.7rem;
+}
+
+.invite-waiting-sublabel {
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  letter-spacing: 0.8px;
+}
+
+.invite-waiting-username {
+  font-size: 1.5rem;
+  font-weight: 900;
+  color: var(--text);
+  margin: 2px 0 0 0;
+}
+
+.invite-status-banner {
+  padding: 14px 18px;
+  background: var(--status-draw-bg);
+  border: 2px solid var(--status-draw-border);
+  color: var(--status-draw-text);
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  margin-bottom: 14px;
+}
+
+.waiting-pulse {
+  animation: waitingPulse 2s infinite ease-in-out;
+}
+
+@keyframes waitingPulse {
+  0% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.02); }
+  100% { opacity: 0.85; transform: scale(1); }
+}
+
+.invite-countdown-badge {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.invite-room-code-tag {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 20px;
+  background: var(--surface-secondary);
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.invite-waiting-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.invite-waiting-actions.single-action {
+  flex-direction: column;
+}
+
+.btn-cancel-invite {
+  flex: 1.2;
+  height: 52px;
+  background: var(--status-loss-bg);
+  color: var(--status-loss-text);
+  border: 2px solid var(--status-loss-border);
+  border-radius: 14px;
+  font-size: 0.98rem;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-cancel-invite:hover {
+  background: #dc2626;
+  color: #ffffff;
+  transform: translateY(-2px);
+}
+
+.btn-back-full {
+  width: 100%;
+  height: 52px;
+  background: var(--primary);
+  color: var(--primary-text);
+  border: none;
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-back-full:hover {
+  background: var(--primary-hover);
+  transform: translateY(-2px);
+}
+
+.invite-status-box {
+  padding: 22px 18px;
+  border-radius: 16px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.invite-status-box.success {
+  background: var(--status-win-bg);
+  border: 2px solid var(--status-win-border);
+  color: var(--status-win-text);
+}
+
+.invite-status-box.declined,
+.invite-status-box.expired,
+.invite-status-box.error {
+  background: var(--status-loss-bg);
+  border: 2px solid var(--status-loss-border);
+  color: var(--status-loss-text);
+}
+
+.invite-status-title {
+  font-size: 1.25rem;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  margin-bottom: 6px;
+}
+
+.invite-status-desc {
+  font-size: 0.95rem;
+  font-weight: 700;
+  opacity: 0.9;
 }
 
 /* ==============================================================================

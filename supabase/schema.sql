@@ -236,3 +236,40 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 REVOKE EXECUTE ON FUNCTION public.delete_user_account() FROM public;
 GRANT EXECUTE ON FUNCTION public.delete_user_account() TO authenticated;
 
+-- ==============================================================================
+-- GAME INVITATIONS TABLE & POLICIES
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS public.game_invitations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  inviter_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  invited_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  room_id TEXT NOT NULL,
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled', 'expired')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '120 seconds'),
+  responded_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_game_invitations_inviter ON public.game_invitations(inviter_id);
+CREATE INDEX IF NOT EXISTS idx_game_invitations_invited ON public.game_invitations(invited_user_id);
+CREATE INDEX IF NOT EXISTS idx_game_invitations_room ON public.game_invitations(room_id);
+
+ALTER TABLE public.game_invitations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view invitations they sent or received"
+  ON public.game_invitations FOR SELECT
+  TO authenticated
+  USING (auth.uid() = inviter_id OR auth.uid() = invited_user_id);
+
+CREATE POLICY "Users can create game invitations"
+  ON public.game_invitations FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = inviter_id);
+
+CREATE POLICY "Participants can update invitation status"
+  ON public.game_invitations FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = inviter_id OR auth.uid() = invited_user_id);
+
+
