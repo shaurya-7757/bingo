@@ -389,14 +389,19 @@ export function App() {
   const [wsStatus, setWsStatus] = useState("disconnected");
 
   // Friend System State
-  const [friendsTab, setFriendsTab] = useState("my_friends"); // "my_friends", "requests", "add"
+  const [friendsTab, setFriendsTab] = useState("my_friends"); // "my_friends", "requests", "sent", "search"
   const [friendsList, setFriendsList] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
+  const [sentRequests, setSentRequests] = useState([]);
   const [friendSearchQuery, setFriendSearchQuery] = useState("");
   const [friendSearchResults, setFriendSearchResults] = useState([]);
   const [friendActionMsg, setFriendActionMsg] = useState("");
   const [friendActionError, setFriendActionError] = useState("");
   const [loadingFriends, setLoadingFriends] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [selectedPublicProfile, setSelectedPublicProfile] = useState(null);
+  const [loadingPublicProfile, setLoadingPublicProfile] = useState(false);
+  const [friendToRemove, setFriendToRemove] = useState(null);
 
   // Incoming Real-time Game Invite Modal
   const [incomingInvite, setIncomingInvite] = useState(null);
@@ -1036,12 +1041,14 @@ export function App() {
     setFriendActionMsg("");
     setFriendActionError("");
     try {
-      const [friends, requests] = await Promise.all([
+      const [friends, requests, sent] = await Promise.all([
         friendService.getFriends(currentUser.id),
         friendService.getFriendRequests(currentUser.id),
+        friendService.getSentFriendRequests(currentUser.id),
       ]);
       setFriendsList(friends);
       setFriendRequests(requests);
+      setSentRequests(sent);
     } catch (err) {
       setFriendActionError("Could not load friends: " + err.message);
     } finally {
@@ -1066,36 +1073,94 @@ export function App() {
   };
 
   const handleSendFriendRequest = async (receiverId) => {
+    setActionLoadingId(receiverId);
     setFriendActionError("");
     setFriendActionMsg("");
     try {
       await friendService.sendFriendRequest(currentUser.id, receiverId);
-      setFriendActionMsg("Friend request sent successfully.");
+      setFriendActionMsg("FRIEND REQUEST SENT");
+      setFriendSearchResults((prev) =>
+        prev.map((u) => (u.id === receiverId ? { ...u, relationship: "request_sent" } : u))
+      );
       loadFriendsData();
     } catch (err) {
       setFriendActionError(err.message || "Could not send friend request.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleCancelFriendRequest = async (requestId, receiverId) => {
+    setActionLoadingId(requestId);
+    setFriendActionError("");
+    setFriendActionMsg("");
+    try {
+      await friendService.cancelFriendRequest(requestId, currentUser.id, receiverId);
+      setFriendActionMsg("REQUEST CANCELLED");
+      setFriendSearchResults((prev) =>
+        prev.map((u) => (u.id === receiverId ? { ...u, relationship: "none", requestId: null } : u))
+      );
+      loadFriendsData();
+    } catch (err) {
+      setFriendActionError(err.message || "Failed to cancel request.");
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
   const handleRespondFriendRequest = async (requestId, accept, senderId) => {
+    setActionLoadingId(requestId);
+    setFriendActionError("");
+    setFriendActionMsg("");
     try {
       await friendService.respondToFriendRequest(requestId, accept, senderId, currentUser.id);
+      setFriendActionMsg(accept ? "FRIEND REQUEST ACCEPTED" : "FRIEND REQUEST DECLINED");
+      setFriendSearchResults((prev) =>
+        prev.map((u) => (u.id === senderId ? { ...u, relationship: accept ? "friends" : "none", requestId: null } : u))
+      );
       loadFriendsData();
     } catch (err) {
       setFriendActionError("Action failed: " + err.message);
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
-  const handleRemoveFriend = async (friendId) => {
+  const handleOpenPublicProfile = async (targetUserId) => {
+    setLoadingPublicProfile(true);
     try {
-      await friendService.removeFriend(currentUser.id, friendId);
+      const profile = await friendService.getPublicUserProfile(targetUserId, currentUser?.id);
+      setSelectedPublicProfile(profile);
+    } catch (err) {
+      setFriendActionError("Could not load user profile: " + err.message);
+    } finally {
+      setLoadingPublicProfile(false);
+    }
+  };
+
+  const handleConfirmRemoveFriend = async () => {
+    if (!friendToRemove) return;
+    setActionLoadingId(friendToRemove.id);
+    try {
+      await friendService.removeFriend(currentUser.id, friendToRemove.id);
+      setFriendActionMsg(`REMOVED ${friendToRemove.username?.toUpperCase()} FROM FRIENDS`);
+      if (selectedPublicProfile?.id === friendToRemove.id) {
+        setSelectedPublicProfile((prev) => (prev ? { ...prev, isFriend: false } : null));
+      }
+      setFriendToRemove(null);
       loadFriendsData();
     } catch (err) {
       setFriendActionError("Failed to remove friend: " + err.message);
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
   const handleInviteFriendToGame = (friend) => {
+    if (friend.onlineStatus === "in_game") {
+      setFriendActionError("USER IS CURRENTLY IN A GAME");
+      return;
+    }
     setGameMode("online");
     const client = getClient();
     client.createRoom(currentUser);
@@ -1642,13 +1707,19 @@ export function App() {
               className={`friends-tab-btn ${friendsTab === "requests" ? "active" : ""}`}
               onClick={() => { setFriendsTab("requests"); loadFriendsData(); }}
             >
-              REQUESTS ({friendRequests.length})
+              FRIEND REQUESTS ({friendRequests.length})
             </button>
             <button
-              className={`friends-tab-btn ${friendsTab === "add" ? "active" : ""}`}
-              onClick={() => { setFriendsTab("add"); setFriendSearchResults([]); }}
+              className={`friends-tab-btn ${friendsTab === "sent" ? "active" : ""}`}
+              onClick={() => { setFriendsTab("sent"); loadFriendsData(); }}
             >
-              ADD FRIEND
+              SENT REQUESTS ({sentRequests.length})
+            </button>
+            <button
+              className={`friends-tab-btn ${friendsTab === "search" ? "active" : ""}`}
+              onClick={() => { setFriendsTab("search"); setFriendSearchResults([]); setFriendActionMsg(""); setFriendActionError(""); }}
+            >
+              SEARCH USERS
             </button>
           </div>
 
@@ -1657,39 +1728,72 @@ export function App() {
 
           {currentUser?.isGuest && (
             <div className="guest-warning-banner">
-              You are currently in Guest mode. Sign in to send persistent friend requests and invite friends.
+              You are currently in Guest mode. Sign in to send persistent friend requests, view full profiles, and invite friends.
             </div>
           )}
 
+          {/* TAB 1: MY FRIENDS */}
           {friendsTab === "my_friends" && (
             <div className="friends-tab-content">
               {loadingFriends ? (
-                <div className="loading-spinner">Loading friends...</div>
+                <div className="loading-spinner">LOADING FRIENDS...</div>
               ) : friendsList.length === 0 ? (
                 <div className="empty-friends-state">
-                  No friends added yet. Use "ADD FRIEND" to search and connect with players!
+                  No friends added yet. Use "SEARCH USERS" to find and connect with players!
                 </div>
               ) : (
                 <div className="friends-list-grid">
                   {friendsList.map((friend) => (
                     <div key={friend.id} className="friend-item-card">
-                      <div className="friend-info">
-                        <span className="friend-name">{friend.username}</span>
-                        <span className={`presence-pill ${friend.onlineStatus}`}>
-                          {friend.onlineStatus.toUpperCase()}
-                        </span>
+                      <div className="friend-card-top">
+                        <div className="friend-avatar-circle">
+                          {friend.username?.charAt(0)?.toUpperCase() || "U"}
+                        </div>
+                        <div className="friend-info-block">
+                          <span className="friend-name">{friend.displayName || friend.username}</span>
+                          <span className={`presence-pill ${friend.onlineStatus}`}>
+                            {friend.onlineStatus.replace("_", " ").toUpperCase()}
+                          </span>
+                        </div>
                       </div>
+
+                      <div className="friend-stats-row">
+                        <div className="friend-stat-col">
+                          <span className="friend-stat-label">Games</span>
+                          <span className="friend-stat-num">{friend.stats?.gamesPlayed || 0}</span>
+                        </div>
+                        <div className="friend-stat-col">
+                          <span className="friend-stat-label">Wins</span>
+                          <span className="friend-stat-num win-text">{friend.stats?.wins || 0}</span>
+                        </div>
+                        <div className="friend-stat-col">
+                          <span className="friend-stat-label">Losses</span>
+                          <span className="friend-stat-num loss-text">{friend.stats?.losses || 0}</span>
+                        </div>
+                        <div className="friend-stat-col">
+                          <span className="friend-stat-label">Draws</span>
+                          <span className="friend-stat-num draw-text">{friend.stats?.draws || 0}</span>
+                        </div>
+                      </div>
+
                       <div className="friend-actions">
+                        <button
+                          className="btn btn-view-profile"
+                          onClick={() => handleOpenPublicProfile(friend.id)}
+                          disabled={loadingPublicProfile}
+                        >
+                          VIEW PROFILE
+                        </button>
                         <button
                           className="btn btn-invite-friend"
                           onClick={() => handleInviteFriendToGame(friend)}
-                          disabled={currentUser?.isGuest}
+                          disabled={currentUser?.isGuest || friend.onlineStatus === "in_game"}
                         >
-                          INVITE TO GAME
+                          {friend.onlineStatus === "in_game" ? "IN GAME" : "INVITE TO GAME"}
                         </button>
                         <button
                           className="btn btn-remove-friend"
-                          onClick={() => handleRemoveFriend(friend.id)}
+                          onClick={() => setFriendToRemove(friend)}
                         >
                           REMOVE
                         </button>
@@ -1701,30 +1805,45 @@ export function App() {
             </div>
           )}
 
+          {/* TAB 2: INCOMING FRIEND REQUESTS */}
           {friendsTab === "requests" && (
             <div className="friends-tab-content">
               {loadingFriends ? (
-                <div className="loading-spinner">Loading requests...</div>
+                <div className="loading-spinner">LOADING REQUESTS...</div>
               ) : friendRequests.length === 0 ? (
-                <div className="empty-friends-state">No pending friend requests.</div>
+                <div className="empty-friends-state">No pending incoming friend requests.</div>
               ) : (
                 <div className="friend-requests-list">
                   {friendRequests.map((req) => (
                     <div key={req.id} className="friend-request-card">
-                      <div className="request-user-info">
-                        <span className="request-username">{req.username}</span>
-                        <span className="request-label">Wants to be your friend</span>
+                      <div className="friend-card-top">
+                        <div className="friend-avatar-circle">
+                          {req.username?.charAt(0)?.toUpperCase() || "U"}
+                        </div>
+                        <div className="request-user-info">
+                          <span className="request-username">{req.displayName || req.username}</span>
+                          <span className="request-label">Wants to be your friend</span>
+                        </div>
                       </div>
                       <div className="request-btn-group">
                         <button
+                          className="btn btn-view-profile"
+                          onClick={() => handleOpenPublicProfile(req.senderId)}
+                          disabled={loadingPublicProfile}
+                        >
+                          VIEW PROFILE
+                        </button>
+                        <button
                           className="btn btn-accept"
                           onClick={() => handleRespondFriendRequest(req.id, true, req.senderId)}
+                          disabled={actionLoadingId === req.id}
                         >
-                          ACCEPT
+                          {actionLoadingId === req.id ? "ACCEPTING..." : "ACCEPT"}
                         </button>
                         <button
                           className="btn btn-decline"
                           onClick={() => handleRespondFriendRequest(req.id, false, req.senderId)}
+                          disabled={actionLoadingId === req.id}
                         >
                           DECLINE
                         </button>
@@ -1736,16 +1855,63 @@ export function App() {
             </div>
           )}
 
-          {friendsTab === "add" && (
+          {/* TAB 3: SENT (OUTGOING) FRIEND REQUESTS */}
+          {friendsTab === "sent" && (
+            <div className="friends-tab-content">
+              {loadingFriends ? (
+                <div className="loading-spinner">LOADING REQUESTS...</div>
+              ) : sentRequests.length === 0 ? (
+                <div className="empty-friends-state">No outgoing friend requests pending.</div>
+              ) : (
+                <div className="friend-requests-list">
+                  {sentRequests.map((req) => (
+                    <div key={req.id} className="friend-request-card">
+                      <div className="friend-card-top">
+                        <div className="friend-avatar-circle">
+                          {req.username?.charAt(0)?.toUpperCase() || "U"}
+                        </div>
+                        <div className="request-user-info">
+                          <span className="request-username">{req.displayName || req.username}</span>
+                          <span className="request-label">
+                            Request sent {req.createdAt ? new Date(req.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : ""}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="request-btn-group">
+                        <button
+                          className="btn btn-view-profile"
+                          onClick={() => handleOpenPublicProfile(req.receiverId)}
+                          disabled={loadingPublicProfile}
+                        >
+                          VIEW PROFILE
+                        </button>
+                        <button
+                          className="btn btn-decline"
+                          onClick={() => handleCancelFriendRequest(req.id, req.receiverId)}
+                          disabled={actionLoadingId === req.id}
+                        >
+                          {actionLoadingId === req.id ? "CANCELLING..." : "CANCEL REQUEST"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: SEARCH USERS */}
+          {friendsTab === "search" && (
             <div className="friends-tab-content">
               <div className="add-friend-search-box">
                 <input
                   type="text"
                   className="friend-search-input"
-                  placeholder="Search user by username"
+                  placeholder="Enter username to search..."
                   value={friendSearchQuery}
                   onChange={(e) => setFriendSearchQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSearchUsers()}
+                  autoFocus
                 />
                 <button className="btn btn-search" onClick={handleSearchUsers} disabled={loadingFriends}>
                   {loadingFriends ? "SEARCHING..." : "SEARCH"}
@@ -1755,17 +1921,78 @@ export function App() {
               <div className="search-results-list">
                 {friendSearchResults.map((user) => (
                   <div key={user.id} className="search-result-card">
-                    <div className="result-user-info">
-                      <span className="result-username">{user.username}</span>
-                      <span className="result-status">{user.online_status?.toUpperCase() || "OFFLINE"}</span>
+                    <div className="friend-card-top">
+                      <div className="friend-avatar-circle">
+                        {user.username?.charAt(0)?.toUpperCase() || "U"}
+                      </div>
+                      <div className="result-user-info">
+                        <span className="result-username">{user.displayName || user.username}</span>
+                        <span className={`presence-pill ${user.onlineStatus}`}>
+                          {user.onlineStatus?.replace("_", " ").toUpperCase() || "OFFLINE"}
+                        </span>
+                      </div>
                     </div>
-                    <button
-                      className="btn btn-send-request"
-                      onClick={() => handleSendFriendRequest(user.id)}
-                      disabled={currentUser?.isGuest}
-                    >
-                      SEND REQUEST
-                    </button>
+
+                    <div className="search-result-actions">
+                      <button
+                        className="btn btn-view-profile"
+                        onClick={() => handleOpenPublicProfile(user.id)}
+                        disabled={loadingPublicProfile}
+                      >
+                        VIEW PROFILE
+                      </button>
+
+                      {user.relationship === "self" && (
+                        <button className="btn btn-relationship-badge" disabled>
+                          THIS IS YOU
+                        </button>
+                      )}
+
+                      {user.relationship === "friends" && (
+                        <button className="btn btn-relationship-badge friends-badge" disabled>
+                          FRIENDS
+                        </button>
+                      )}
+
+                      {user.relationship === "request_sent" && (
+                        <button
+                          className="btn btn-decline"
+                          onClick={() => handleCancelFriendRequest(user.requestId, user.id)}
+                          disabled={actionLoadingId === user.requestId}
+                        >
+                          {actionLoadingId === user.requestId ? "CANCELLING..." : "REQUEST SENT (CANCEL)"}
+                        </button>
+                      )}
+
+                      {user.relationship === "request_received" && (
+                        <div className="request-btn-group inline-actions">
+                          <button
+                            className="btn btn-accept"
+                            onClick={() => handleRespondFriendRequest(user.requestId, true, user.id)}
+                            disabled={actionLoadingId === user.requestId}
+                          >
+                            ACCEPT
+                          </button>
+                          <button
+                            className="btn btn-decline"
+                            onClick={() => handleRespondFriendRequest(user.requestId, false, user.id)}
+                            disabled={actionLoadingId === user.requestId}
+                          >
+                            DECLINE
+                          </button>
+                        </div>
+                      )}
+
+                      {user.relationship === "none" && (
+                        <button
+                          className="btn btn-send-request"
+                          onClick={() => handleSendFriendRequest(user.id)}
+                          disabled={currentUser?.isGuest || actionLoadingId === user.id}
+                        >
+                          {actionLoadingId === user.id ? "SENDING REQUEST..." : "ADD FRIEND"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1776,6 +2003,141 @@ export function App() {
             BACK TO MENU
           </button>
         </div>
+
+        {/* --- PUBLIC USER PROFILE MODAL --- */}
+        {selectedPublicProfile && (
+          <div className="modal-overlay" onClick={() => setSelectedPublicProfile(null)}>
+            <div className="public-profile-modal-card" onClick={(e) => e.stopPropagation()}>
+              <div className="public-profile-header">
+                <h3 className="public-profile-title">PROFILE</h3>
+                <span className="public-profile-subtitle">PUBLIC USER PROFILE</span>
+              </div>
+
+              <div className="profile-header-card modal-profile-top">
+                <div className="profile-avatar-circle">
+                  {selectedPublicProfile.username?.charAt(0)?.toUpperCase() || "U"}
+                </div>
+                <div className="profile-header-info">
+                  <h2 className="profile-username">{selectedPublicProfile.displayName || selectedPublicProfile.username}</h2>
+                  <div className="public-profile-status-wrap">
+                    <span className={`presence-pill ${selectedPublicProfile.onlineStatus}`}>
+                      {selectedPublicProfile.onlineStatus?.replace("_", " ").toUpperCase() || "OFFLINE"}
+                    </span>
+                  </div>
+                  {selectedPublicProfile.createdAt && (
+                    <span className="profile-created-at">
+                      Account Created: {new Date(selectedPublicProfile.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="stats-section-title">ONLINE STATISTICS</div>
+              <div className="stats-grid-card">
+                <div className="stat-box">
+                  <span className="stat-label">GAMES PLAYED</span>
+                  <span className="stat-value">{selectedPublicProfile.stats?.gamesPlayed || 0}</span>
+                </div>
+                <div className="stat-box">
+                  <span className="stat-label">WINS</span>
+                  <span className="stat-value win-color">{selectedPublicProfile.stats?.wins || 0}</span>
+                </div>
+                <div className="stat-box">
+                  <span className="stat-label">LOSSES</span>
+                  <span className="stat-value loss-color">{selectedPublicProfile.stats?.losses || 0}</span>
+                </div>
+                <div className="stat-box">
+                  <span className="stat-label">DRAWS</span>
+                  <span className="stat-value draw-color">{selectedPublicProfile.stats?.draws || 0}</span>
+                </div>
+                <div className="stat-box highlight-box">
+                  <span className="stat-label">WIN RATE</span>
+                  <span className="stat-value highlight-value">{selectedPublicProfile.stats?.winRate || "0.0%"}</span>
+                </div>
+              </div>
+
+              <div className="public-profile-modal-actions">
+                {selectedPublicProfile.isFriend && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-modal-invite"
+                      onClick={() => {
+                        setSelectedPublicProfile(null);
+                        handleInviteFriendToGame(selectedPublicProfile);
+                      }}
+                      disabled={currentUser?.isGuest || selectedPublicProfile.onlineStatus === "in_game"}
+                    >
+                      {selectedPublicProfile.onlineStatus === "in_game" ? "IN GAME" : "INVITE TO GAME"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-modal-remove"
+                      onClick={() => {
+                        setFriendToRemove(selectedPublicProfile);
+                      }}
+                    >
+                      REMOVE FRIEND
+                    </button>
+                  </>
+                )}
+
+                {!selectedPublicProfile.isFriend && selectedPublicProfile.id !== currentUser?.id && (
+                  <button
+                    type="button"
+                    className="btn btn-send-request"
+                    onClick={() => handleSendFriendRequest(selectedPublicProfile.id)}
+                    disabled={currentUser?.isGuest || actionLoadingId === selectedPublicProfile.id}
+                  >
+                    {actionLoadingId === selectedPublicProfile.id ? "SENDING REQUEST..." : "ADD FRIEND"}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="btn btn-modal-close"
+                  onClick={() => setSelectedPublicProfile(null)}
+                >
+                  BACK TO FRIENDS
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- REMOVE FRIEND CONFIRMATION MODAL --- */}
+        {friendToRemove && (
+          <div className="modal-overlay">
+            <div className="delete-modal-card">
+              <div className="delete-modal-header">
+                <h3 className="delete-modal-title">REMOVE FRIEND</h3>
+              </div>
+
+              <p className="delete-modal-warning">
+                Are you sure you want to remove <strong>{friendToRemove.username}</strong> from your friends list?
+              </p>
+
+              <div className="delete-modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-modal-cancel"
+                  onClick={() => setFriendToRemove(null)}
+                  disabled={actionLoadingId === friendToRemove.id}
+                >
+                  CANCEL
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-modal-delete-confirm"
+                  onClick={handleConfirmRemoveFriend}
+                  disabled={actionLoadingId === friendToRemove.id}
+                >
+                  {actionLoadingId === friendToRemove.id ? "REMOVING FRIEND..." : "REMOVE FRIEND"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

@@ -998,7 +998,7 @@ body {
 }
 
 /* ==============================================================================
-   FRIENDS SYSTEM UI (ENLARGED & ROBUST)
+   FRIENDS SYSTEM UI (ENLARGED, RESPONSIVE & COMPLETE)
    ============================================================================== */
 .friends-nav-tabs {
   display: flex;
@@ -1008,19 +1008,22 @@ body {
   border-radius: 16px;
   border: 1.5px solid var(--border);
   margin-bottom: 22px;
+  flex-wrap: wrap;
 }
 
 .friends-tab-btn {
   flex: 1;
-  padding: 12px;
+  min-width: 140px;
+  padding: 12px 10px;
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 0.92rem;
+  font-size: 0.88rem;
   font-weight: 800;
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
 .friends-tab-btn.active {
@@ -1034,38 +1037,73 @@ body {
 .search-results-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .friend-item-card,
 .friend-request-card,
 .search-result-card {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   background: var(--surface-card);
   border: 2px solid var(--border);
-  border-radius: 16px;
+  border-radius: 18px;
   padding: 18px 22px;
   box-shadow: var(--shadow-sm);
-  flex-wrap: wrap;
-  gap: 12px;
+  gap: 14px;
+  transition: all 0.2s ease;
 }
 
-.friend-info,
+.friend-item-card:hover,
+.friend-request-card:hover,
+.search-result-card:hover {
+  border-color: var(--border-strong);
+}
+
+.friend-card-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.friend-avatar-circle {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-text);
+  font-size: 1.3rem;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-btn);
+}
+
+.friend-info-block,
 .request-user-info,
 .result-user-info {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  flex: 1;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .friend-name,
 .request-username,
 .result-username {
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   font-weight: 800;
   color: var(--text);
+}
+
+.request-label {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .presence-pill {
@@ -1074,6 +1112,8 @@ body {
   padding: 4px 10px;
   border-radius: 8px;
   letter-spacing: 0.6px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .presence-pill.online {
@@ -1094,10 +1134,67 @@ body {
   border: 1px solid var(--border);
 }
 
+.friend-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  background: var(--surface-secondary);
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+
+.friend-stat-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.friend-stat-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.friend-stat-num {
+  font-size: 1rem;
+  font-weight: 900;
+  color: var(--text);
+}
+
+.friend-stat-num.win-text { color: #16a34a; }
+.friend-stat-num.loss-text { color: #dc2626; }
+.friend-stat-num.draw-text { color: #d97706; }
+
+[data-theme="dark"] .friend-stat-num.win-text { color: #4ade80; }
+[data-theme="dark"] .friend-stat-num.loss-text { color: #f87171; }
+[data-theme="dark"] .friend-stat-num.draw-text { color: #facc15; }
+
 .friend-actions,
-.request-btn-group {
+.request-btn-group,
+.search-result-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-view-profile {
+  padding: 10px 16px;
+  background: var(--surface-secondary);
+  color: var(--text);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-view-profile:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
 }
 
 .btn-invite-friend {
@@ -1118,6 +1215,11 @@ body {
   transform: translateY(-2px);
 }
 
+.btn-invite-friend:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-remove-friend {
   padding: 10px 16px;
   background: var(--surface-secondary);
@@ -1125,7 +1227,7 @@ body {
   border: 1.5px solid var(--border);
   border-radius: 10px;
   font-weight: 800;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -1136,35 +1238,52 @@ body {
 }
 
 .btn-accept {
-  padding: 10px 20px;
+  padding: 10px 18px;
   background: var(--status-win-bg);
   color: var(--status-win-text);
   border: 1.5px solid var(--status-win-border);
   border-radius: 10px;
   font-weight: 800;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   cursor: pointer;
   transition: transform 0.2s ease;
 }
 
-.btn-accept:hover {
+.btn-accept:hover:not(:disabled) {
   transform: translateY(-2px);
 }
 
 .btn-decline {
-  padding: 10px 18px;
+  padding: 10px 16px;
   background: var(--status-loss-bg);
   color: var(--status-loss-text);
   border: 1.5px solid var(--status-loss-border);
   border-radius: 10px;
   font-weight: 800;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   cursor: pointer;
   transition: transform 0.2s ease;
 }
 
-.btn-decline:hover {
+.btn-decline:hover:not(:disabled) {
   transform: translateY(-2px);
+}
+
+.btn-relationship-badge {
+  padding: 10px 16px;
+  background: var(--surface-secondary);
+  color: var(--text-muted);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 0.86rem;
+  cursor: default;
+}
+
+.btn-relationship-badge.friends-badge {
+  background: var(--status-win-bg);
+  color: var(--status-win-text);
+  border-color: var(--status-win-border);
 }
 
 .add-friend-search-box {
@@ -1210,6 +1329,12 @@ body {
   font-weight: 800;
   font-size: 0.88rem;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-send-request:hover:not(:disabled) {
+  background: var(--primary-hover);
+  transform: translateY(-2px);
 }
 
 .empty-friends-state,
@@ -1255,6 +1380,113 @@ body {
   color: var(--status-loss-text);
   border: 1.5px solid var(--status-loss-border);
 }
+
+/* ==============================================================================
+   PUBLIC USER PROFILE MODAL
+   ============================================================================== */
+.public-profile-modal-card {
+  background: var(--surface-card);
+  border: 2px solid var(--border);
+  border-radius: 24px;
+  padding: 32px 28px;
+  width: 100%;
+  max-width: 520px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.4);
+  text-align: left;
+  animation: modalScaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.public-profile-header {
+  margin-bottom: 16px;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.public-profile-title {
+  font-size: 1.5rem;
+  font-weight: 900;
+  color: var(--text);
+  margin: 0 0 4px 0;
+}
+
+.public-profile-subtitle {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  letter-spacing: 0.8px;
+}
+
+.modal-profile-top {
+  margin-bottom: 16px;
+}
+
+.public-profile-status-wrap {
+  margin: 6px 0;
+}
+
+.public-profile-modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.btn-modal-invite {
+  width: 100%;
+  height: 48px;
+  background: var(--primary);
+  color: var(--primary-text);
+  border: none;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-modal-invite:hover:not(:disabled) {
+  background: var(--primary-hover);
+  transform: translateY(-2px);
+}
+
+.btn-modal-remove {
+  width: 100%;
+  height: 48px;
+  background: var(--status-loss-bg);
+  color: var(--status-loss-text);
+  border: 1.5px solid var(--status-loss-border);
+  border-radius: 14px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-modal-remove:hover {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.btn-modal-close {
+  width: 100%;
+  height: 48px;
+  background: var(--surface-secondary);
+  border: 2px solid var(--border);
+  color: var(--text);
+  border-radius: 14px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-modal-close:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+
 
 /* ==============================================================================
    ONLINE MATCH HISTORY UI (ENLARGED & CLEAN)
