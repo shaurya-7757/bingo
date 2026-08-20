@@ -328,7 +328,7 @@ export function App() {
   // Authentication & User State
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
-  const [authMode, setAuthMode] = useState("signin"); // "signin", "signup"
+  const [authMode, setAuthMode] = useState("signin"); // "signin", "signup", "forgot"
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authConfirmPassword, setAuthConfirmPassword] = useState("");
@@ -336,6 +336,7 @@ export function App() {
   const [authError, setAuthError] = useState("");
   const [authSuccess, setAuthSuccess] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // App Navigation Screens: "auth", "main_menu", "diff_select", "online_lobby", "friends", "history", "profile", "game"
   const [screen, setScreen] = useState("auth");
@@ -1483,26 +1484,41 @@ export function App() {
             {authError && <div className="auth-alert error">{authError}</div>}
             {authSuccess && <div className="auth-alert success">{authSuccess}</div>}
 
-            <form className="auth-form" onSubmit={handleSignInSubmit}>
+            <form id="signin-form" className="auth-form" onSubmit={handleSignInSubmit}>
               <div className="form-group">
-                <label className="form-label">Email</label>
+                <label className="form-label" htmlFor="signin-email">Email</label>
                 <input
+                  id="signin-email"
+                  name="email"
                   type="email"
                   className="form-input"
                   placeholder="Enter your email"
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
+                  autoComplete="email"
                   required
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Password</label>
+                <div className="form-label-row">
+                  <label className="form-label" htmlFor="signin-password">Password</label>
+                  <button
+                    type="button"
+                    className="btn-toggle-password"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                  >
+                    {showPassword ? "HIDE PASSWORD" : "SHOW PASSWORD"}
+                  </button>
+                </div>
                 <input
-                  type="password"
+                  id="signin-password"
+                  name="password"
+                  type={showPassword ? "text" : "password"}
                   className="form-input"
                   placeholder="Enter your password"
                   value={authPassword}
                   onChange={(e) => setAuthPassword(e.target.value)}
+                  autoComplete="current-password"
                   required
                 />
               </div>
@@ -1551,48 +1567,69 @@ export function App() {
             {authError && <div className="auth-alert error">{authError}</div>}
             {authSuccess && <div className="auth-alert success">{authSuccess}</div>}
 
-            <form className="auth-form" onSubmit={handleSignUpSubmit}>
+            <form id="signup-form" className="auth-form" onSubmit={handleSignUpSubmit}>
               <div className="form-group">
-                <label className="form-label">Username</label>
+                <label className="form-label" htmlFor="signup-username">Username</label>
                 <input
+                  id="signup-username"
+                  name="username"
                   type="text"
                   className="form-input"
                   placeholder="Choose a unique username"
                   value={authUsername}
                   onChange={(e) => setAuthUsername(e.target.value)}
+                  autoComplete="username"
                   required
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Email</label>
+                <label className="form-label" htmlFor="signup-email">Email</label>
                 <input
+                  id="signup-email"
+                  name="email"
                   type="email"
                   className="form-input"
                   placeholder="Enter your email"
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
+                  autoComplete="email"
                   required
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Password</label>
+                <div className="form-label-row">
+                  <label className="form-label" htmlFor="signup-password">Password</label>
+                  <button
+                    type="button"
+                    className="btn-toggle-password"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                  >
+                    {showPassword ? "HIDE PASSWORD" : "SHOW PASSWORD"}
+                  </button>
+                </div>
                 <input
-                  type="password"
+                  id="signup-password"
+                  name="password"
+                  type={showPassword ? "text" : "password"}
                   className="form-input"
                   placeholder="Create password (min 6 characters)"
                   value={authPassword}
                   onChange={(e) => setAuthPassword(e.target.value)}
+                  autoComplete="new-password"
                   required
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Confirm Password</label>
+                <label className="form-label" htmlFor="signup-confirm-password">Confirm Password</label>
                 <input
-                  type="password"
+                  id="signup-confirm-password"
+                  name="confirmPassword"
+                  type={showPassword ? "text" : "password"}
                   className="form-input"
                   placeholder="Confirm your password"
                   value={authConfirmPassword}
                   onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
                   required
                 />
               </div>
@@ -1619,15 +1656,18 @@ export function App() {
             {authError && <div className="auth-alert error">{authError}</div>}
             {authSuccess && <div className="auth-alert success">{authSuccess}</div>}
 
-            <form className="auth-form" onSubmit={(e) => { e.preventDefault(); handleForgotPassword(); }}>
+            <form id="forgot-form" className="auth-form" onSubmit={(e) => { e.preventDefault(); handleForgotPassword(); }}>
               <div className="form-group">
-                <label className="form-label">Email</label>
+                <label className="form-label" htmlFor="forgot-email">Email</label>
                 <input
+                  id="forgot-email"
+                  name="email"
                   type="email"
                   className="form-input"
                   placeholder="Enter your registered email"
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
+                  autoComplete="email"
                   required
                 />
               </div>

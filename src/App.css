@@ -376,11 +376,35 @@ body {
   text-align: left;
 }
 
+.form-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
 .form-label {
   font-size: 0.82rem;
   font-weight: 800;
   letter-spacing: 0.8px;
   color: var(--text-secondary);
+}
+
+.btn-toggle-password {
+  background: transparent;
+  border: none;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: var(--primary);
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 0.2s ease, text-decoration 0.2s ease;
+}
+
+.btn-toggle-password:hover {
+  text-decoration: underline;
+  opacity: 0.85;
 }
 
 .form-input {
